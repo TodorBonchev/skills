@@ -30,6 +30,12 @@ Native/Pinocchio handlers also get `offset-mismatch` (a hand-coded byte range on
 account data that misses every field boundary of the matching `#[repr(C)]` /
 `#[repr(packed)]` struct) and `key-compared-no-signer` (an account's key is
 compared against stored data but `is_signer` is never checked on it).
+Raw writes through borrowed account data (`copy_from_slice`, `v[..] =`,
+`copy_nonoverlapping`, `serialize(&mut v)`, typed `load_mut`) count as state
+changes, so native initialisers without a signer or init guard are raised.
+Anchor exit paths (withdraw / redeem / claim / close / unwrap ...) that require
+an account owned by another program get `foreign-dependency`, and a `close =`
+whose destination is an unconstrained raw account gets `close-to-unchecked`.
 """
 import os
 import re
@@ -1060,6 +1066,40 @@ def in_code_checks(inst, fields):
     return out
 
 
+EXIT_NAME = re.compile(r"withdraw|redeem|unwrap|unstake|claim|close|exit|repay|liquidat|settle|refund|cancel|unlock|release|remove_liquidity|burn", re.I)
+LOCAL_ROOTS = {"crate", "self", "super", "std", "core", "anchor_lang", "anchor_spl", "solana_program", "solana_sdk", "pinocchio",
+               "spl_token", "spl_token_2022", "spl_token_interface", "spl_associated_token_account", "mpl_token_metadata"}
+LOCAL_IDS = re.compile(r"^(?:crate\s*::\s*)?(?:ID|id\s*\(\s*\)|program_id|__private::\w+)$|token|system_program|associated", re.I)
+
+
+def foreign_owner(f, src):
+    """The crate (or program-ID expression) that owns an account field, when it
+    is plainly another program: `Account<'info, other::T>`, a type imported with
+    `use other::...::T`, or `owner = other::ID`. A `seeds::program` PDA is
+    usually passed straight through to that program's CPI and is not raised.
+    Token/Mint types and the program's own crate are never foreign."""
+    for key in ("owner",):
+        for v in f.val(key):
+            v = re.sub(r"\s+", "", v)
+            if v and not LOCAL_IDS.search(v):
+                return v
+    if f.kind not in ("Account", "AccountLoader", "LazyAccount"):
+        return ""
+    inner = re.sub(r"\s+", "", f.inner)
+    name = inner.split("::")[-1]
+    if re.search(r"(TokenAccount|Mint)$", name):
+        return ""
+    if "::" in inner:
+        root = inner.split("::")[0]
+    else:
+        mt = re.search(r"\buse\s+(?:::)?(\w+)\s*::[^;]*\b%s\b[^;]*;" % re.escape(name), src.m)
+        root = mt.group(1) if mt else ""
+    own = (getattr(src, "crate", "") or "").replace("-", "_")
+    if not root or root in LOCAL_ROOTS or root == own:
+        return ""
+    return root
+
+
 def anchor_flags(inst, st, res):
     fl = []
     fields = {f.name: f for f in st["fields"]}
@@ -1100,8 +1140,23 @@ def anchor_flags(inst, st, res):
         bump = [v for v in f.val("bump") if v]
         if bump and (bump[0] in st["ix_args"] or bump[0] in inst["args"]):
             fl.append((key, "user-bump", "`%s` takes `bump = %s` from instruction data — a non-canonical bump gives a second valid address" % (f.name, bump[0]), inst))
+        for dest in [re.sub(r"\s+", "", v) for v in f.val("close") if v]:
+            t = fields.get(dest)
+            # an undocumented raw destination is already `unchecked-account`, and an
+            # instruction with no signer is already `no-signer`: raise only the case those miss
+            if t is not None and t.is_raw and t.has_check_doc and has_signer and not (t.val("address") or t.val("seeds") or t.val("constraint") or t.val("owner")) \
+                    and dest not in [v.split("@")[0].strip() for v in st_has_one(fields)] and "key" not in hand.get(dest, ()) \
+                    and not any(re.search(r"\b%s\b" % re.escape(dest), v) for g in fields.values() for v in g.val("constraint")):
+                fl.append((key, "close-to-unchecked", "`%s` is closed to `%s` (%s), which has no address / seeds / has_one / constraint — the caller picks who receives every lamport; a drain when the closed account holds more than its own rent (escrow, SOL vault, rent someone else paid)" % (f.name, dest, t.kind), inst))
         if "init_if_needed" in f.keys:
             fl.append((key, "init-if-needed", "`%s` uses `init_if_needed` — check that a second call cannot reset state on an existing account" % f.name, inst))
+    if EXIT_NAME.search(inst["name"]):
+        for f in fields.values():
+            if f.keys & {"init", "init_if_needed"}:
+                continue
+            who = foreign_owner(f, st["src"])
+            if who:
+                fl.append((key, "foreign-dependency", "exit path requires `%s` (%s), an account owned by another program (`%s`) — if that program or its admin closes, migrates or re-keys it, this instruction fails for every caller (Anchor: AccountNotInitialized / AccountOwnedByWrongProgram); check for a fallback, and whether that party can also decide who may exit" % (f.name, f.type_desc(), squash(who, 40)), inst))
     muts = {}
     for f in fields.values():
         written = any(w == f.name or w.startswith(f.name + ".") or w.endswith(" " + f.name) for w in res["writes"])
@@ -1277,8 +1332,8 @@ def render(srcs, entries, flags, dispatchers, needs):
         out.append("_None raised by the script. That is not a clean bill: the script cannot see logic bugs._\n")
     else:
         order = ["no-signer", "authority-not-signer", "key-compared-no-signer", "arbitrary-cpi", "check-deferred", "unchecked-account", "raw-deserialize", "write-unbound", "sysvar-unchecked",
-                 "offset-mismatch", "user-bump", "pda-no-user-key", "signer-seeds-no-user-key", "singleton-init", "global-signer", "duplicate-mutable", "manual-close", "reinit",
-                 "init-if-needed", "type-cosplay", "remaining-accounts", "stale-after-cpi", "check-comment-only", "raw-checked-in-code", "singleton-write"]
+                 "offset-mismatch", "user-bump", "pda-no-user-key", "signer-seeds-no-user-key", "singleton-init", "global-signer", "duplicate-mutable", "manual-close", "close-to-unchecked", "reinit",
+                 "init-if-needed", "type-cosplay", "remaining-accounts", "stale-after-cpi", "foreign-dependency", "check-comment-only", "raw-checked-in-code", "singleton-write"]
         flags = sorted(flags, key=lambda x: (order.index(x[1]) if x[1] in order else 99, x[0]))
         out.append("| # | Where | Flag | Detail |\n| --- | --- | --- | --- |")
         for i, (k, tag, msg, inst) in enumerate(flags, 1):
