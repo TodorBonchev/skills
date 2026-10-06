@@ -36,6 +36,28 @@ changes, so native initialisers without a signer or init guard are raised.
 Anchor exit paths (withdraw / redeem / claim / close / unwrap ...) that require
 an account owned by another program get `foreign-dependency`, and a `close =`
 whose destination is an unconstrained raw account gets `close-to-unchecked`.
+
+Native/Pinocchio idioms the map follows so it does not raise false leads:
+- Program names come from the nearest Cargo.toml `[lib] name` / `[package] name`
+  (hyphens become underscores), so one workspace with many crates does not
+  collapse every handler into one `program::` prefix. `declare_id!` carries no
+  name and is not used. Generic handler names (`process`, `handler`, `run`) are
+  qualified with their module (`claim::process`).
+- Signer and owner checks done inside a helper count: a helper whose parameter
+  reaches `is_signer()` / `signer_key()` / `*Signer*::try_from(..)` or an owner
+  check (`p.owner`, `p.owned_by(..)`, `check_owner(p, ..)`) marks the argument at
+  every call site, through helper-to-helper and `self.` calls (fixpoint). The
+  row then reads `checked (helper)`.
+- Typed account structs validated in a constructor (`impl TryFrom<&[AccountView]>`
+  / `impl TryFrom<&[AccountInfo]>`, or `fn try_from/new/parse/load/validate(accounts)
+  -> Result<Self>`) are merged into the handler that builds them, so the
+  checks done there are seen, and the constructor is not listed as a handler.
+- A helper that creates and initialises an account counts as an init guard;
+  `remaining_accounts`-style bindings (`rest @ ..`, a struct field of slice type)
+  are not raised as uses.
+- An account whose owner is checked only in a helper and that is decoded with no
+  key or PDA binding keeps a `raw-deserialize` lead worded for substitution by
+  another account of the same type.
 """
 import os
 import re
@@ -179,7 +201,53 @@ class Src:
         return "%s:%d" % (self.path, line_of(self.text, idx))
 
 
+_PKG = {}
+
+
+def cargo_package(path):
+    """Name of the Cargo package that owns `path`: `[lib] name`, else `[package] name`
+    (hyphens to underscores, as rustc names the crate) from the nearest Cargo.toml
+    with a `[package]` table. A workspace-only manifest ends the walk: the file is
+    not inside a package, so the caller falls back to the directory name."""
+    d = os.path.dirname(os.path.abspath(path))
+    while True:
+        if d in _PKG:
+            return _PKG[d]
+        man = os.path.join(d, "Cargo.toml")
+        if os.path.isfile(man):
+            name = None
+            try:
+                with open(man, encoding="utf-8", errors="replace") as fh:
+                    txt = fh.read()
+            except OSError:
+                txt = ""
+            tables = {}
+            cur = None
+            for line in txt.splitlines():
+                line = line.split("#", 1)[0].strip()
+                hm = re.match(r"^\[\s*([\w.\-]+)\s*\]$", line)
+                if hm:
+                    cur = hm.group(1); tables.setdefault(cur, {}); continue
+                km = re.match(r'^(\w+)\s*=\s*"([^"]+)"', line)
+                if km and cur is not None:
+                    tables[cur].setdefault(km.group(1), km.group(2))
+            if "package" in tables:
+                name = tables.get("lib", {}).get("name") or tables["package"].get("name")
+                name = name.replace("-", "_") if name else None
+            if name or "workspace" in tables or "package" in tables:
+                _PKG[d] = name
+                return name
+        parent = os.path.dirname(d)
+        if parent == d:
+            _PKG[d] = None
+            return None
+        d = parent
+
+
 def crate_name(path):
+    pkg = cargo_package(path)
+    if pkg:
+        return pkg
     parts = path.replace("\\", "/").split("/")
     for i in range(len(parts) - 1, 0, -1):
         if parts[i] == "src" and parts[i - 1] not in ("", "."):
@@ -563,7 +631,8 @@ def analyse_body(bodies, fields, native_names=()):
             if src in names:
                 aliases.setdefault(mt.group(1), aliases.get(src, src))
     res["any_is_signer"] = bool(re.search(r"\bis_signer\b", allm))
-    res["init_checks"] = bool(re.search(r"is_initialized|initialized\b|DISCRIMINATOR|discriminator|AccountAlreadyInitialized|lamports\(\)\s*[!=]=\s*0|data_is_empty|data_len\(\)\s*[!=]=\s*0|create_account|CreateAccount\b|allocate\s*\(", allm))
+    res["init_checks"] = bool(re.search(r"is_initialized|initialized\b|DISCRIMINATOR|discriminator|AccountAlreadyInitialized|lamports\(\)\s*[!=]=\s*0|data_is_empty|data_len\(\)\s*[!=]=\s*0|create_account|CreateAccount\b|allocate\s*\(", allm)) or \
+        any(g in INIT_HELPERS for g in re.findall(r"\b([a-z_]\w*)\s*(?:::\s*<[^>]*>\s*)?\(", allm))
     seen_w = set()
     for b in bodies:
         m, t = b.m, b.text
@@ -735,6 +804,11 @@ def analyse_body(bodies, fields, native_names=()):
             res["gates"].append("if %s → Err" % squash(t[mt.start(1):mt.end(1)], 90))
         # ---- remaining accounts
         for mt in re.finditer(r"\bremaining_accounts\b", m):
+            # a rest binding (`remaining_accounts @ ..`), a field declaration or a
+            # shorthand struct field moves the slice; it is not a use of its elements
+            if re.match(r"\s*@", m[mt.end():]) or re.match(r"\s*:\s*&", m[mt.end():]) or \
+               (re.match(r"\s*[,}]", m[mt.end():]) and re.search(r"[{,]\s*$", m[:mt.start()])):
+                continue
             res["remaining"].append(b.loc(mt.start()))
         # ---- reads after CPI without reload (Anchor)
         for mt in re.finditer(r"\breload\s*\(", m):
@@ -813,6 +887,204 @@ class NAcct:
         self.name, self.how, self.idx = name, how, idx
 
 
+# Account-check helpers. Native and Pinocchio code rarely writes `acct.is_signer()` in
+# the handler: it calls `verify_signer(acct)`, `check_owner(acct, &ID)`, or a method
+# `acct.assert_signer()`. A helper is classified by which of its PARAMETERS it checks
+# (`p.is_signer()`, `p.owner()`, `owned_by(p, ..)`), followed through helper-to-helper
+# calls to a fixpoint, so only the account in that argument position counts as
+# checked: `validate_ata(vault, owner.address(), ..)` checks `vault`, not `owner`.
+HELPERS = {}      # fn name -> {"signer": set(param idx), "owner": set(param idx)}; idx -1 = self
+SIGNER_EXTERNAL = re.compile(r"\b(?:verify|check|assert|require|expect|ensure|validate)_\w*signer\w*\s*\(\s*&?\s*(?:mut\s+)?\*?\s*(\w+)\b")
+SIGNER_METHOD = re.compile(r"\b(\w+)\s*\.\s*signer_key\s*\(\s*\)")   # solana-program: Some(key) only for a signer
+SIGNER_WRAPPER = re.compile(r"\b\w*Signer\w*\s*(?:::\s*<[^>]*>\s*)?::\s*(?:try_from|new|check|from_account_info|from_account_view)\s*\(\s*&?\s*(?:mut\s+)?(\w+)\b")
+CALL_RE = re.compile(r"\b([a-z_]\w*)\s*\(([^;{}]*)\)")
+
+
+def _params(params):
+    out = []
+    for p in split_top(params, angle=True):
+        nm = p.split(":")[0].strip().lstrip("&").replace("mut ", "").strip()
+        out.append("self" if nm.endswith("self") else nm)
+    return out
+
+
+def _arg_is(arg, name):
+    return re.match(r"^&?\s*(?:mut\s+)?\*?\s*%s\s*(?:\.\s*(?:clone|as_ref)\s*\(\s*\))?$" % re.escape(name), arg.strip())
+
+
+INIT_RE = r"is_initialized|initialized\b|DISCRIMINATOR|discriminator|AccountAlreadyInitialized|lamports\(\)\s*[!=><]=?\s*0|data_is_empty|data_len\(\)\s*[!=]=\s*0|create_account|CreateAccount\b|allocate\s*\("
+INIT_HELPERS = set()   # local fns whose body (or a helper they call) carries an init guard
+
+
+def collect_helpers(srcs):
+    defs = []
+    for s in srcs:
+        for name, params, bs, be, fi in functions(s):
+            defs.append((name, _params(params), s.m[bs:be]))
+    for _ in range(5):
+        grew = False
+        for name, _ps, body in defs:
+            if name not in INIT_HELPERS and name not in TRAIT_FNS and (re.search(INIT_RE, body) or any(g in INIT_HELPERS for g, _a in CALL_RE.findall(body))):
+                INIT_HELPERS.add(name); grew = True
+        if not grew:
+            break
+    for name, _ps, _b in defs:
+        HELPERS.setdefault(name, {"signer": set(), "owner": set()})
+    direct = {
+        "signer": lambda p: r"\b%s\s*\.\s*(?:is_signer|signer_key)\b" % p,
+        "owner": lambda p: r"\b%s\s*\.\s*(?:owner|owned_by|is_owned_by)\b|\b(?:owned_by|is_owned_by|check_owner|assert_owner\w*)\s*\(\s*&?\s*%s\b" % (p, p),
+    }
+    for _ in range(5):
+        changed = False
+        for name, ps, body in defs:
+            h = HELPERS[name]
+            for kind in ("signer", "owner"):
+                for i, p in enumerate(ps):
+                    idx = -1 if p == "self" else i
+                    if idx in h[kind] or not re.match(r"^\w+$", p):
+                        continue
+                    hit = bool(re.search(direct[kind](p), body))
+                    if not hit:
+                        for g, args in CALL_RE.findall(body):
+                            gi = HELPERS.get(g, {}).get(kind, ())
+                            al = split_top(args)
+                            if any(0 <= j < len(al) and _arg_is(al[j], p) for j in gi):
+                                hit = True
+                                break
+                    if not hit:
+                        hit = any(-1 in hh[kind] and re.search(r"\b%s\s*\.\s*%s\s*\(" % (p, re.escape(g)), body) for g, hh in HELPERS.items())
+                    if hit:
+                        h[kind].add(idx)
+                        changed = True
+        if not changed:
+            break
+
+
+def helper_checked(m, name, kind):
+    """Helpers that check `kind` ("signer" / "owner") on account `name` in masked text `m`."""
+    n = re.escape(name)
+    hits = []
+    for g, args in CALL_RE.findall(m):
+        idxs = HELPERS.get(g, {}).get(kind, ())
+        al = split_top(args)
+        if any(0 <= j < len(al) and _arg_is(al[j], name) for j in idxs):
+            hits.append(g)
+    for g, hh in HELPERS.items():
+        if -1 in hh[kind] and re.search(r"\b%s\s*\.\s*%s\s*\(" % (n, re.escape(g)), m):
+            hits.append(g)
+    if kind == "signer":
+        hits += [mt.group(0).split("(")[0].strip() for mt in SIGNER_EXTERNAL.finditer(m) if mt.group(1) == name]
+        hits += [mt.group(0).split("(")[0].strip() for mt in SIGNER_WRAPPER.finditer(m) if mt.group(1) == name]
+        hits += ["signer_key" for mt in SIGNER_METHOD.finditer(m) if mt.group(1) == name]
+    return sorted(set(hits))
+
+
+def any_signer_check(m):
+    """A signature is checked somewhere in masked text `m`: `is_signer`, a signer helper
+    (by parameter analysis or by name), or a typed signer wrapper."""
+    if re.search(r"\bis_signer\b", m) or SIGNER_EXTERNAL.search(m) or SIGNER_WRAPPER.search(m) or SIGNER_METHOD.search(m):
+        return True
+    if any(HELPERS.get(g, {}).get("signer") for g, _a in CALL_RE.findall(m)):
+        return True
+    return any(-1 in hh["signer"] and re.search(r"\.\s*%s\s*\(" % re.escape(g), m) for g, hh in HELPERS.items())
+
+
+# Typed account structs. Pinocchio and modern native programs validate accounts in a
+# constructor (`impl TryFrom<&[AccountView]> for DepositAccounts`, or any associated fn
+# that takes the account slice and returns `Self`), and the processor only calls
+# `DepositAccounts::try_from(accounts)`, or a wrapper type built by a macro or holding
+# a `DepositAccounts` field. The constructor's body is merged into every processor that
+# reaches it, so its signer, owner and key checks count for that instruction, and the
+# constructor is not mapped a second time on its own.
+ACCT_IMPLS = {}   # (crate, Type) -> [Body]
+ACCT_ALIAS = {}   # (crate, Type) -> Type whose constructor validates the accounts
+CTOR_NAMES = ("try_from", "new", "parse", "from_accounts", "from_account_infos", "from_account_views", "load", "validate")
+
+
+def collect_account_impls(srcs):
+    for s in srcs:
+        for mt in re.finditer(r"\bimpl\b", s.m):
+            j = s.m.find("{", mt.end())
+            if j < 0 or ";" in s.m[mt.end():j]:
+                continue
+            head = s.m[mt.end():j]
+            fm = re.search(r"\bfor\s+(\w+)\s*(?:<[^{]*>)?\s*(?:where\b[^{]*)?$", head)
+            if fm:
+                if not re.search(r"TryFrom\s*<[^{]*\b(AccountView|AccountInfo)\b", head[:fm.start()]):
+                    continue
+                ty, is_tf = fm.group(1), True
+            else:
+                im = re.match(r"\s*(?:<[^{]*?>)?\s*(\w+)\s*(?:<[^{]*>)?\s*(?:where\b[^{]*)?$", head)
+                if not im:
+                    continue
+                ty, is_tf = im.group(1), False
+            cb = match_close(s.m, j)
+            for name, params, bs, be, fi in functions(s, j, cb):
+                if not ACCT_PARAM.search(params):
+                    continue
+                if is_tf or re.search(r"->\s*(?:Result\s*<\s*)?Self\b", s.m[fi:bs]):
+                    ACCT_IMPLS.setdefault((s.crate, ty), []).append(Body(s, bs, be, name))
+    for s in srcs:
+        for mt in re.finditer(r"\b\w+\s*!\s*\(([^;]*?)\)", s.m):
+            ids = re.findall(r"\b([A-Z]\w*)\b", mt.group(1))
+            for i, x in enumerate(ids):
+                if (s.crate, x) in ACCT_IMPLS:
+                    continue
+                for y in ids[i + 1:]:
+                    if (s.crate, y) in ACCT_IMPLS:
+                        ACCT_ALIAS.setdefault((s.crate, x), y)
+                        break
+        for mt in re.finditer(r"\bstruct\s+(\w+)\s*(?:<[^>{;]*>)?\s*\{", s.m):
+            ob = mt.end() - 1
+            cb = match_close(s.m, ob)
+            if (s.crate, mt.group(1)) in ACCT_IMPLS:
+                continue
+            for ft in re.findall(r"\b\w+\s*:\s*([A-Z]\w*)\b", s.m[ob:cb]):
+                if (s.crate, ft) in ACCT_IMPLS:
+                    ACCT_ALIAS.setdefault((s.crate, mt.group(1)), ft)
+                    break
+
+
+def resolve_account_impl(crate, ty, depth=0):
+    if (crate, ty) in ACCT_IMPLS:
+        return ty, ACCT_IMPLS[(crate, ty)]
+    if depth < 3 and (crate, ty) in ACCT_ALIAS:
+        return resolve_account_impl(crate, ACCT_ALIAS[(crate, ty)], depth + 1)
+    return None, []
+
+
+def unpack_accounts(body):
+    accts = []
+    for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*next_account_info\s*\(", body.m):
+        accts.append(NAcct(mt.group(1), "next_account_info", mt.start()))
+    for mt in re.finditer(r"\blet\s+\[([^\]]*)\]\s*=\s*([^;{]*?)(?:else|;)", body.m):
+        if "accounts" not in mt.group(2):
+            continue
+        for nm in split_top(mt.group(1)):
+            nm = nm.strip().lstrip("&").replace("ref ", "").replace("mut ", "").strip()
+            if re.match(r"^\w+$", nm):
+                accts.append(NAcct(nm, "slice pattern", mt.start()))
+    for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*&?\s*accounts\s*(?:\[\s*(\d+)\s*\]|\.get\s*\(\s*(\d+)\s*\)|\.(first)\s*\(\s*\))", body.m):
+        accts.append(NAcct(mt.group(1), "accounts[%s]" % (mt.group(2) or mt.group(3) or "0"), mt.start()))
+    return accts
+
+
+GENERIC_FN = {"process", "handler", "handle", "run", "execute", "invoke_handler"}
+
+
+def qualified_name(src, name):
+    """`process` / `handler` written once per instruction module is not a name: two
+    instructions would share one key. Prefix the module (`claim::process`)."""
+    if name not in GENERIC_FN:
+        return name
+    stem = os.path.splitext(os.path.basename(src.path))[0]
+    if stem == "mod":
+        stem = os.path.basename(os.path.dirname(src.path))
+    if stem in ("lib", "main", "processor", "entrypoint", "instruction", "instructions", "src"):
+        return name
+    return "%s::%s" % (stem, name)
+
+
 def native_handlers(srcs, anchor_struct_names):
     out = []
     for s in srcs:
@@ -824,33 +1096,42 @@ def native_handlers(srcs, anchor_struct_names):
                 continue
             pnames = [p.split(":")[0].strip().lstrip("_") for p in split_top(params, angle=True)]
             body = Body(s, bs, be, name)
-            accts = []
-            for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*next_account_info\s*\(", body.m):
-                accts.append(NAcct(mt.group(1), "next_account_info", mt.start()))
-            for mt in re.finditer(r"\blet\s+\[([^\]]*)\]\s*=\s*([^;{]*?)(?:else|;)", body.m):
-                if "accounts" not in mt.group(2):
-                    continue
-                for nm in split_top(mt.group(1)):
-                    nm = nm.strip().lstrip("&").replace("ref ", "").replace("mut ", "").strip()
-                    if re.match(r"^\w+$", nm):
-                        accts.append(NAcct(nm, "slice pattern", mt.start()))
-            for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*&?\s*accounts\s*(?:\[\s*(\d+)\s*\]|\.get\s*\(\s*(\d+)\s*\)|\.(first)\s*\(\s*\))", body.m):
-                accts.append(NAcct(mt.group(1), "accounts[%s]" % (mt.group(2) or mt.group(3) or "0"), mt.start()))
+            accts = unpack_accounts(body)
+            bodies, via = [body], []
+            if not accts:
+                for tm in re.finditer(r"\b([A-Z]\w*)\s*(?:::\s*<[^>]*>\s*)?::\s*(\w+)\s*\(", body.m):
+                    if tm.group(2) not in CTOR_NAMES:
+                        continue
+                    args = body.m[tm.end():match_close(body.m, tm.end() - 1)]
+                    if not re.search(r"\baccounts\b", args):
+                        continue
+                    ty, impl_bodies = resolve_account_impl(s.crate, tm.group(1))
+                    for ib in impl_bodies:
+                        if all(ib.start != b.start or ib.src is not b.src for b in bodies):
+                            bodies.append(ib)
+                            accts.extend(unpack_accounts(ib))
+                    if impl_bodies:
+                        via.append("%s::%s" % (ty, impl_bodies[0].name))
             dispatch = re.findall(r"\b(\w+)\s*\(\s*(?:program_id\s*,\s*)?&?\s*(?:mut\s+)?accounts\b", body.m)
             dispatch = [d for d in dispatch if d not in ("next_account_info", "iter", "len", "get", "Ok", "Some")]
+            if via:
+                dispatch = [d for d in dispatch if d not in CTOR_NAMES]
             if not accts and dispatch:
                 out.append({"dispatcher": True, "name": name, "src": s, "idx": fi, "calls": dispatch, "framework": fw,
                             "program": s.crate})
                 continue
-            out.append({"dispatcher": False, "program": s.crate, "name": name, "src": s, "idx": fi,
-                        "bodies": [body], "accts": accts, "framework": fw,
+            out.append({"dispatcher": False, "program": s.crate, "name": qualified_name(s, name), "src": s, "idx": fi,
+                        "bodies": bodies, "accts": accts, "framework": fw, "via": via,
                         "delegates": dispatch, "params": pnames})
-    return out
+    # A constructor merged into a processor is not mapped again as a handler of its own.
+    merged = {(b.src.path, b.start) for h in out if not h["dispatcher"] for b in h["bodies"][1:]}
+    return [h for h in out if h["dispatcher"] or len(h["bodies"]) > 1 or (h["src"].path, h["bodies"][0].start) not in merged]
+
+
 
 
 def native_account_rows(h, res):
-    body = h["bodies"][0]
-    m = body.m
+    m = "\n".join(b.m for b in h["bodies"])
     rows, unresolved = [], []
     helper_calls = re.findall(r"\b([a-z_]\w*)\s*\(([^;]*)\)", m)
     for a in h["accts"]:
@@ -860,8 +1141,17 @@ def native_account_rows(h, res):
         else:
             used = True
         signer = "checked" if re.search(r"\b%s\s*\.\s*is_signer\b" % n, m) else "—"
+        if signer == "—":
+            hs = helper_checked(m, a.name, "signer")
+            if hs:
+                signer = "checked (%s)" % ", ".join(hs[:2])
         writable = "checked" if re.search(r"\b%s\s*\.\s*is_writable\b" % n, m) else ""
         owner = "checked" if (re.search(r"\b%s\s*\.\s*owner\b" % n, m) or re.search(r"(owned_by|is_owned_by|check_owner|assert_owner\w*)\s*\([^;]*\b%s\b" % n, m) or re.search(r"\b%s\s*\.\s*(is_owned_by|owned_by)\s*\(" % n, m)) else "—"
+        owner_via = []
+        if owner == "—":
+            owner_via = helper_checked(m, a.name, "owner")
+            if owner_via:
+                owner = "checked (%s)" % ", ".join(owner_via[:2])
         KREF = r"\b%s\s*\.\s*(?:key|address)\s*(?:\(\s*\))?(?:\s*\.\s*(?:as_ref|as_array|to_bytes)\s*\(\s*\))?" % n
         partners = [x.strip() for x in re.findall(KREF + r"\s*(?:!=|==)\s*([^{};|&]+)", m)] + \
                    [x.strip() for x in re.findall(r"([\w.\[\]()&*:]+(?:\s*\.\s*\w+\s*\(\s*\))*)\s*(?:!=|==)\s*&?\*?\s*" + KREF[2:], m)]
@@ -877,7 +1167,8 @@ def native_account_rows(h, res):
                 seeds = d["seeds"]
                 bump = "canonical (find_program_address)" if d["fn"] == "find_program_address" else "supplied: " + bump_source(d, h)
         passed = [f for f, args in helper_calls if f in LOCAL_FNS and f not in TRAIT_FNS and re.search(r"\b%s\b" % n, args) and f not in ("msg", "Ok", "Err", "Some", "invoke", "invoke_signed", "next_account_info", "clone", "key", "require", "assert", "map_err", "ok_or")]
-        if owner == "—" and passed and not a.name.endswith("_program"):
+        wallet = signer.startswith("checked") and not written and not ty
+        if owner == "—" and passed and not a.name.endswith("_program") and not wallet:
             owner = "? (passed to %s)" % ", ".join(sorted(set(passed))[:3])
             unresolved.append(a.name)
         if signer == "—" and passed and AUTH_NAME.search(a.name):
@@ -885,7 +1176,7 @@ def native_account_rows(h, res):
             unresolved.append(a.name)
         rows.append({"name": a.name, "how": a.how, "signer": signer, "mut": ("written" if written else "") + ((" · is_writable " + writable) if writable else ""),
                      "owner": owner, "key": "key compared" if key else "—", "type": ty or ("?" if used else "unused"),
-                     "seeds": seeds, "bump": bump, "written": written, "used": used, "partners": partners})
+                     "seeds": seeds, "bump": bump, "written": written, "used": used, "partners": partners, "owner_via": owner_via})
     return rows, sorted(set(unresolved))
 
 
@@ -1328,13 +1619,22 @@ def native_flags(h, rows, res):
     key = "%s::%s" % (h["program"], h["name"])
     names = [r["name"] for r in rows]
     state_change = bool(res["writes"] or res["cpis"] or res["lamports"])
-    if state_change and not res["any_is_signer"] and not h.get("delegates"):
+    if state_change and not res["any_is_signer"] and not h.get("delegates") and \
+       not any(r["signer"].startswith("checked") for r in rows) and not any_signer_check("\n".join(b.m for b in h["bodies"])):
         fl.append((key, "no-signer", "handler changes state and checks `is_signer` on no account", h))
     for r in rows:
         if AUTH_NAME.search(r["name"]) and r["signer"] == "—" and r["used"] and r["key"] != "—" and not r["seeds"]:
             fl.append((key, "authority-not-signer", "`%s` is named like an authority and its key is compared, but `is_signer` is never checked on it here — anyone can pass the right key without the signature" % r["name"], h))
-        if r["type"] not in ("?", "unused", "") and r["owner"] == "—" and r["key"] == "—":
-            fl.append((key, "raw-deserialize", "`%s` is decoded as `%s` with no owner check and no key check — a look-alike account decodes the same" % (r["name"], r["type"]), h))
+        # An owner check found only inside a helper keeps the decode lead, re-worded: the
+        # helper proves the account is this program's, not WHICH one of its accounts it is,
+        # and a substituted read-only config is the classic shape. A written account with a
+        # helper owner check is treated like a direct owner check (no write-unbound).
+        via = r.get("owner_via")
+        if r["type"] not in ("?", "unused", "") and (r["owner"] == "—" or via) and r["key"] == "—":
+            if via:
+                fl.append((key, "raw-deserialize", "`%s` is decoded as `%s`; its owner is checked in `%s`, but no key or PDA check binds it — another account of the same type passes" % (r["name"], r["type"], via[0]), h))
+            else:
+                fl.append((key, "raw-deserialize", "`%s` is decoded as `%s` with no owner check and no key check — a look-alike account decodes the same" % (r["name"], r["type"]), h))
         if r["written"] and r["owner"] == "—" and r["key"] == "—" and not r["seeds"] and r["name"] not in ("payer", "fee_payer"):
             fl.append((key, "write-unbound", "`%s` is written with no owner, key or PDA check — the runtime only blocks writes to accounts this program does not own, so any account it does own (another user's, another type) can be passed here" % r["name"], h))
         if r["signer"] == "—" and r["used"] and not r["seeds"] and not AUTH_NAME.search(r["name"]) and \
@@ -1470,6 +1770,8 @@ def render_native(h, rows, res, unresolved):
     md = []
     key = "%s::%s" % (h["program"], h["name"])
     md.append("### `%s` — %s handler (`%s`)\n" % (key, h["framework"], h["src"].loc(h["idx"])))
+    if h.get("via"):
+        md.append("Accounts validated in %s (merged below).\n" % ", ".join("`%s` (`%s`)" % (v, b.loc(0)) for v, b in zip(h["via"], h["bodies"][1:])))
     if not rows:
         md.append("_Accounts: `?` — this handler does not unpack accounts itself%s. Needs completion._\n" % (
             (" (passes them to %s)" % ", ".join("`%s`" % d for d in dict.fromkeys(h["delegates"]))) if h.get("delegates") else ""))
@@ -1518,6 +1820,8 @@ def main(argv):
     srcs = [Src(f) for f in files]
     for s_ in srcs:
         LOCAL_FNS.update(mt.group(1) for mt in FN_RE.finditer(s_.m))
+    collect_helpers(srcs)
+    collect_account_impls(srcs)
     collect_layouts(srcs)
     structs = {}
     for s in srcs:
