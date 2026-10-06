@@ -50,3 +50,4 @@ proof: concrete numbers showing the seam — the trigger input, the intermediate
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P4** oracle manipulation feeding a value calc (Mango). **P5** pricing-curve manipulation (Nirvana). **P8** rounding net-positive (SPL token-lending). - **B10** overflow / cast truncation. **B11** stale post-CPI read of `amount`/`supply`.
+- **New (v1.2):** **B16** a payout computed from live state with no `min_out` bound. **L5** silent u64 overflow on a large withdrawal. **L9** precision loss across a multiplier that decides solvency.

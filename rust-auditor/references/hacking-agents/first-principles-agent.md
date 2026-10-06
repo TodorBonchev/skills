@@ -40,3 +40,4 @@ proof: concrete trace showing the broken assumption and the extracted value
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P2** relative consistency is not identity — an unvalidated root account (Cashio). - **P3** a fake account that satisfies a weak check (Crema). - **B3** type cosplay — two layouts, no tag to tell them apart.
+- **New (v1.2):** **B14** an authority handover that assumes the new key is live and correct (single-step transfer). **L2** 'the callee will check it' — a deferred validation nobody actually performs.

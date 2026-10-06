@@ -46,3 +46,4 @@ proof: concrete trace showing the trust gap — authorization step, economic ste
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P2** root-of-trust gap (Cashio). **P6** over-powered admin (Raydium). **P7** insufficient admin check (Solend). **P10** governance capture (Synthetify). - **B7** PDA sharing / confused deputy across the access-economics seam.
+- **New (v1.2):** **B14** single-step authority transfer across the access seam. **L3** a bypassable timelock. **L8** a privileged setter missing an admin check.

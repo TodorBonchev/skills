@@ -29,3 +29,15 @@ For every helper fn and every `impl` method in target modules:
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **B2** missing owner check on a manually deserialized account. - **B3** account-data matching / type cosplay (no discriminator). - **B9** sysvar address checking. - **P1** sysvar substitution through a raw decode (Wormhole).
+- **New (v1.2):** **B15** a `/// CHECK` that defers validation to another program. **L11** Neodyme's routine periphery checklist — missing rent-exemption assertion, missing freeze-authority checks, redeployment / cross-instance confusion, CPI recursion, log truncation. See **Native / Pinocchio manual validation** below.
+
+## Native / Pinocchio manual validation (periphery view)
+
+Native `solana-program` and Pinocchio handlers get no automatic owner/discriminator/signer checks —
+every one is hand-written in the deserialization and helper layer this agent owns. When the program
+is native/Pinocchio, read the decode path closely: `next_account_info` / index access ties nothing
+to a role, `try_from_slice` / `from_bytes` skip the discriminator, and there is no owner check unless
+the code writes one. Also confirm the periphery essentials Anchor would not give you either:
+rent-exemption assertion on persistent accounts, freeze-authority checks on mints/token accounts,
+and safe handling of log output (log truncation). (Sources: sec-patterns pinocchio examples; Neodyme
+P-Token common-vulnerabilities checklist.)

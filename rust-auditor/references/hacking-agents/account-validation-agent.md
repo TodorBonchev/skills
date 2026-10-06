@@ -84,3 +84,37 @@ proof: the concrete account list and data you send, and the resulting state delt
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P1** sysvar substitution. **P2** unvalidated root-of-trust account. **P3** fake account on a weak owner check. **P7** authority read from a caller-supplied account. - **B1** missing signer. **B2** missing owner. **B3** type cosplay. **B4** reinit / init front-running. - **B5** arbitrary CPI. **B6** duplicate mutable accounts. **B7** bump / PDA canonicalization. **B8** close / revival. **B9** sysvar address.
+- **New (v1.2):** **B13** account-creation griefing — a predictable per-user `init` PDA an attacker pre-funds to DoS. **B15** validation deferred to a callee/CPI that doesn't do it (account-map `check-deferred`). **L2** a destination account trusted to the callee (GLAM E20). **L11** also check freeze-authority, SPL account verification, rent-exemption assertion. See **Native / Pinocchio manual validation** below.
+
+## Native / Pinocchio manual validation
+
+Anchor does a lot for free: `Account<'info, T>` checks owner + discriminator, `Signer` checks the
+signature, `#[account(has_one = x)]` checks the link, `seeds`/`bump` re-derive the PDA. **Native
+`solana-program` and Pinocchio handlers get NONE of this automatically** — the program reads
+`&[AccountInfo]` by position and must do every check by hand. Treat a native/Pinocchio handler as
+guilty until each of these is proven in the code:
+
+- **Position, not name.** Accounts arrive as an ordered slice walked by `next_account_info` (native)
+  or an index/`accounts.get(...)` (Pinocchio). Nothing ties slot *i* to the role the handler assumes
+  — an attacker reorders or substitutes freely. Every account must be identified by an explicit
+  check, not by its variable name.
+- **Signer.** There is no `Signer` type. The handler must test `account.is_signer` (native) /
+  `account.is_signer()` (Pinocchio) before any privileged action. Missing `is_signer` = B1, and it
+  is the single most common native bug.
+- **Owner.** No automatic owner check. The handler must compare `account.owner == program_id` (for
+  its own state) or the expected program (for SPL accounts) before trusting the data. Missing = B2.
+- **Type / discriminator.** A hand decode (`try_from_slice`, `from_bytes`, `unpack_unchecked`) does
+  not check a discriminator — confirm a type tag / `is_initialized` byte is read, or it is type
+  cosplay (B3).
+- **PDA.** No `seeds`/`bump` constraint. The handler must re-derive with
+  `find_program_address` / `create_program_address` and compare to the passed key, and prefer the
+  canonical bump — otherwise B7 (fake PDA, non-canonical bump).
+- **CPI authority & program.** `invoke_signed` seeds and the target program ID are both
+  hand-supplied; confirm the program ID is pinned (B5) and the signer seeds name a user key (B7). A
+  user-controlled account passed as the *authority* of a token-transfer CPI is privilege escalation.
+- **Rent / existence / freeze.** Check rent-exemption where the account must persist, and
+  freeze-authority / SPL account fields where relevant (L11).
+
+(Sources: sec-patterns `programs/*/pinocchio/{vulnerable,secure}.rs` — side-by-side Anchor vs
+Pinocchio for missing-signer, missing-has-one, insecure-pda, cpi-authority-misuse, unsafe-arithmetic;
+sec-secrets "Anchor vs Pinocchio" comparison; Neodyme P-Token "Select Common Vulnerabilities".)

@@ -56,3 +56,4 @@ proof: concrete arithmetic showing the bug with actual numbers and types
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P8** rounding direction lets a deposit/withdraw loop net positive (SPL token-lending). - **P5** flash-loan pricing-curve manipulation (Nirvana). - **B8** paired-conversion rounding in the user's favour. - **B10** integer overflow / `as` cast truncation — read the Build context for the overflow-checks setting.
+- **New (v1.2):** **L5** silent u64 overflow in withdrawal/accounting math with release overflow-checks off (Indentura H01/H02). **L9** imprecise multiplier / precision loss toward insolvency (M0 #3).

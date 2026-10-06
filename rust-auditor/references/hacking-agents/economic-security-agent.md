@@ -47,3 +47,4 @@ proof: concrete numbers showing profitability or fund loss
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P4** oracle manipulation of a thin market (Mango). - **P5** flash-loan pricing-curve manipulation (Nirvana). - **P9** arbitrary-program CPI through an unvalidated price integration (Loopscale). - **P3** fake account feeding a fee/price calc (Crema). - **B12** Token-2022 extension assumptions (transfer fees, hooks, permanent delegate).
+- **New (v1.2):** **B16** missing slippage / payout bound on swap or withdraw. **L1** an allow-list enforced on one integration path but skipped on another (GLAM E07). **L4** fee crystallization ordered wrong, so a user nets extra shares (GLAM L10; M0 #2). **L9** imprecise multiplier drifting toward insolvency (M0 #3).

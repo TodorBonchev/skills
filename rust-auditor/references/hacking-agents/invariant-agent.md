@@ -51,3 +51,4 @@ proof: concrete values showing invariant holding before and broken after
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P2** missing root-of-trust account validation breaks a supply invariant (Cashio). - **P8** rounding that violates conservation (SPL token-lending). - **B8** closing accounts / revival (manual lamports-to-zero, re-funded in the same tx). - **B4** re-initialization resetting live state.
+- **New (v1.2):** **B13** account-creation griefing as a DoS on a protocol invariant (users can't onboard). **L4** fee crystallization vs share/order ordering breaking the share invariant. **L9** a solvency invariant broken by precision loss.

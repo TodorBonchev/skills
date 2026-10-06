@@ -52,3 +52,4 @@ proof: concrete trace showing the seam
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
 - **P1** sysvar substitution across the external-program seam (Wormhole). **P9** arbitrary CPI across an integration (Loopscale). - **B5** arbitrary CPI / privilege forwarding. **B11** stale account after CPI across instruction composition.
+- **New (v1.2):** **B15** validation deferred across the program-boundary seam (GLAM E20). **L1** an allow-list skipped on one cross-program path. **L2** a destination account that must resolve to a protocol-controlled address.
