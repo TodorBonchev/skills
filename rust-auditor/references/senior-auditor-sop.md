@@ -64,7 +64,7 @@ You don't apply these in order — except Feynman, which is always first. You re
 - Opening any new instruction, function or `Accounts` struct → **Feynman** (always — before anything else)
 - Trying to understand a line you don't yet → **Socratic**
 - Something looks too clean → **Inversion**
-- You reached a "bug" conclusion → amplify the attack (chain it, find more victims, lower the precondition cost — do NOT refute it)
+- You reached a "bug" conclusion → amplify the attack (chain it, find more victims, lower the precondition cost — do NOT refute it). "Intended", "by design" or "self-harm", with no statement of that intent in the source, is not a refutation: emit the LEAD `shared-rules.md` requires.
 
 The tools are how you keep yourself honest. Without them, you fall into the trap of every junior auditor: trusting your first read, accepting code that "looks right," moving on when something feels off.
 

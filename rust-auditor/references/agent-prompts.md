@@ -51,8 +51,12 @@ calibration. Emit them. A defect the code proves wrong with no
 attacker at all — an instruction that fails for every caller, a
 constraint that is always true or never true, a byte offset that
 misreads the struct layout, a two-leg route that accepts the same mint
-or account on both legs — is a FINDING, not a lead (shared-rules.md,
-"Correctness defects are FINDINGs").
+or account on both legs, a settings field the setter never assigns
+while later logic reads it — is a FINDING, not a lead (shared-rules.md,
+"Correctness defects are FINDINGs"). If you would drop a correctness
+or economic candidate as intended, by design or self-harm, and the
+source does not state that intent, emit the LEAD shared-rules.md
+requires. Do not drop it.
 
 Don't skim. Don't trust your first read. Trust your discomfort.
 
@@ -129,8 +133,12 @@ they're calibration. Emit them. A defect the code proves wrong with no
 attacker at all — an instruction that fails for every caller, a
 constraint that is always true or never true, a byte offset that
 misreads the struct layout, a two-leg route that accepts the same mint
-or account on both legs — is a FINDING, not a lead (shared-rules.md,
-"Correctness defects are FINDINGs").
+or account on both legs, a settings field the setter never assigns
+while later logic reads it — is a FINDING, not a lead (shared-rules.md,
+"Correctness defects are FINDINGs"). If you would drop a correctness
+or economic candidate as intended, by design or self-harm, and the
+source does not state that intent, emit the LEAD shared-rules.md
+requires. Do not drop it.
 
 Don't skim. Don't trust your first read. Trust your discomfort.
 

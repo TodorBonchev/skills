@@ -22,16 +22,17 @@ Prove the vulnerable state exists in a live deployment.
 
 Prove an unprivileged actor executes the attack.
 
-- Only trusted roles can trigger (admin, upgrade authority, a whitelisted keeper) → **DEMOTE** (except an **honest-admin hazard**, below)
-- Unprivileged actor triggers profitably → **clears**, continue
+- Only a trusted role can cause the harm (admin, upgrade authority, a whitelisted keeper) → **DEMOTE** (except an **honest-admin hazard**, and except **privileged-op griefing**, both below). An outsider who makes the trusted instruction fail is the trigger. The trusted caller is the victim.
+- An unprivileged actor triggers profitably, or makes a privileged instruction fail, stall or behave differently → **clears**, continue
 
-**Admin-action findings — reject unless an unprivileged amplifier is named.** This applies ONLY to actions performed by the admin, the config authority or the upgrade authority, NOT to unprivileged attacker actions. If the harm requires the admin acting maliciously or against documented intent, **REJECT** — do not even emit as a LEAD (stricter than the DEMOTE above). The finding clears only when the body names a concrete unprivileged amplifier:
+**Admin-action findings — reject unless an unprivileged amplifier is named.** This applies ONLY to harm the admin, the config authority or the upgrade authority causes, NOT to unprivileged attacker actions and NOT to harm an outsider inflicts on a privileged path. If the harm requires the admin acting maliciously or against documented intent, **REJECT** — do not even emit as a LEAD (stricter than the DEMOTE above). The finding clears only when the body names a concrete unprivileged amplifier:
 
 - **race** — the admin sets X mid-flow; an unprivileged user exploits the window, for example in the same slot, before the update reaches every account that caches X.
 - **retroactive sweep** — an admin update rewrites a pending value already credited.
 - **asymmetric formula** — admin output chains into a formula an unprivileged actor profits from.
 - **access gap** — a missing `Signer`, a missing owner or `has_one` check, a tautological check (`constraint = config.admin == config.admin`), an `initialize` anyone can call first, or an upgrade-authority check that reads a spoofable account (the access mechanism itself is the bug).
 - **privilege passthrough** — the program forwards a user's signer, or a writable account the user owns, in a CPI to a program the **user** did not choose: a hook or plugin the admin stored in config, a program named by a mint extension or a pool, a program the caller supplies. The admin picks the program, but the defect is that the user's authority reaches it — that is an access gap, not an admin action, and it clears even when the hook is admin-set (pattern **B24**). Token-2022's own transfer-hook CPI passes every account read-only and without signer privilege; a hook that receives less than the user's signature is not this amplifier.
+- **privileged-op griefing** — an actor other than the privileged caller makes a privileged, one-shot or time-sensitive instruction fail, stall or behave differently. The means are: pre-creating or pre-funding an account the instruction creates (a PDA, or an account a CPI creates in another program that does not require the owner's signature — pattern **B26**), filling a fixed slot or a capacity, front-running an init, a lock, a migrate, a finalize or a settle, or exhausting a one-shot resource. The instruction being admin-gated does not demote this. The description says an attacker makes the instruction fail, and does not use the word griefing (`report-language.md`). Gate 4 scores the impact: a migration, lock or settlement that stays blocked, so funds are stranded or the protocol stops, is material; a failure the caller can retry on the next slot, with nothing stranded, is **DEMOTE**.
 
 No amplifier named → **REJECTED**. Amplifier named → judge it on that unprivileged path.
 
@@ -46,9 +47,10 @@ Score it on the honest path: deduct **-10** (it requires the admin call) and **-
 
 Prove material harm to an identifiable victim.
 
-- Self-harm only (the caller passes their own wrong account and loses their own tokens) → **REJECTED**
+- Self-harm only — the caller chooses their own wrong account or input and loses only their own tokens → **REJECTED**. A protocol formula that over-charges or under-charges every user on a path is not this case. Do not label that formula self-harm.
 - Dust-level, no compounding (a few lamports, one base unit of a token) → **DEMOTE**
-- Material loss to an identifiable victim — tokens or lamports taken from a vault or another user, an account taken over, a mint inflated, an instruction that fails for every caller so funds stay locked, permanent loss of control of a privileged role (no signer can ever call the admin instructions again) → **CONFIRMED**
+- Material loss to an identifiable victim — tokens or lamports taken from a vault or another user, an account taken over, a mint inflated, an instruction that fails for every caller so funds stay locked, a migration, lock or settlement that stays blocked so funds are stranded or the protocol stops (Gate 3, privileged-op griefing), permanent loss of control of a privileged role (no signer can ever call the admin instructions again) → **CONFIRMED**
+- Privileged-op griefing the caller can retry on the next slot, with no funds stranded → **DEMOTE**
 
 **Stubbed impact.** A privileged instruction whose body is a stub — only `msg!(..)`, `Ok(())` or a `// TODO` — still has a name and an account list that state its impact (`emergency_withdraw` with the vault and a destination, `set_admin`, `sweep_fees`). When the **access** defect itself clears gates 1–3 (a missing `Signer`, a missing `has_one`, an `initialize` anyone can call first), judge the impact by what the name and the accounts say the instruction does: the stub is shipped code, and the next upgrade fills it in behind the same broken gate. Deduct **-15** (the harm cannot run today) and write `Stubbed: impact as named.` in the Description. A stub with no access defect is not a finding. Do not reject the access defect because "the function does nothing yet".
 
@@ -60,6 +62,17 @@ Prove material harm to an identifiable victim.
 - a **two-leg route** (swap, transfer, migrate) that accepts the same mint or the same account on both legs — no `from != to` check — so a same-asset round trip runs through the accounting (pattern **B17**).
 
 When the proof is in the code — quote the line, and the layout, value or account type that makes it always fail or always pass — it is a **FINDING at fixed confidence 75** with a **Fix** block, not a lead, and the deductions above do not apply. The title starts with `Correctness:`. Gates 2 and 3 do not apply (there is no attacker to find); gate 1 still applies — trace that the failure really happens on every call. **If the same defect also locks funds or pays an attacker, it is not in this lane:** score it through the four gates (an instruction that fails for every caller so funds stay locked is already **CONFIRMED** above, and a same-asset round trip that credits value is a normal finding).
+
+The same split covers a proven formula or comparison defect. In this lane when nobody is paid and nothing is stranded; through the four gates when the wrong value pays a caller or strands funds:
+
+- a fee or rate computed on amount X while the applied amount on that branch is Y ≠ X (`math-precision-agent.md`, fee-base consistency);
+- a formula in phases (slot, timestamp, utilisation, supply, tier) that jumps or leaves a gap at a boundary (`numerical-gap-agent.md`, piecewise continuity);
+- a `lamports()` or token-`amount` check against a tracked reserve that does not subtract the rent-exempt minimum (`invariant-agent.md`);
+- a settings field that an update-input struct carries and the setter never assigns, or that the update path skips while it writes the sibling fields, while later logic reads it (`asymmetry-agent.md`, setter completeness).
+
+## Design-guess demotion
+
+Do not **REJECT** a correctness or economic candidate because it looks intended, by design, expected, like self-harm, or fine. Those words are a reason to drop it only when a doc comment, a named constant or a spec line states that intent. A proven defect stays a finding: the correctness lane, or the four gates when it pays a caller or strands funds. When you will not score it as a finding, and the source does not state the intent, **DEMOTE** to a LEAD and put the assumption in `description:` (`assumes the fee is meant to be charged on the full input even when the fill is capped`). Never delete it. A formula that mis-charges every user on a path is not self-harm (Gate 4). Items named in **Do Not Report** below, and the standard tradeoffs named in `shared-rules.md` (MEV, rounding dust, a seeded first depositor), stay out: they are that list, not a guess about this program.
 
 ## Confidence
 
@@ -121,4 +134,4 @@ High-signal trails for manual investigation. No confidence score, no fix — tit
 
 ## Do Not Report
 
-Clippy lints, compiler warnings, compute-unit micro-optimisations, naming, doc comments. Admin privileges by design (but an honest-admin hazard — Gate 3 — is not "by design"). Missing `emit!` events or `msg!` logs. Centralisation without an exploit path — "the upgrade authority can replace the program" is not a finding unless the upgrade authority itself is unprotected. EVM-only classes the Solana runtime prevents: cross-program reentrancy (the runtime rejects A → B → A; only direct self-recursion is allowed). Implausible preconditions (but Token-2022 mints with transfer fees, transfer hooks, a permanent delegate or a freeze authority, mints with unusual decimals, and accounts closed and re-created at the same address ARE plausible for programs that accept any mint or any account).
+Clippy lints, compiler warnings, compute-unit micro-optimisations, naming, doc comments. Admin privileges by design (but an honest-admin hazard — Gate 3 — is not "by design", and privileged-op griefing is not an admin privilege). Missing `emit!` events or `msg!` logs. Centralisation without an exploit path — "the upgrade authority can replace the program" is not a finding unless the upgrade authority itself is unprotected. EVM-only classes the Solana runtime prevents: cross-program reentrancy (the runtime rejects A → B → A; only direct self-recursion is allowed). Implausible preconditions (but Token-2022 mints with transfer fees, transfer hooks, a permanent delegate or a freeze authority, mints with unusual decimals, and accounts closed and re-created at the same address ARE plausible for programs that accept any mint or any account). A guess that a formula or a check is intended, with no doc comment, named constant or spec line that says so, is not on this list: demote it and state the assumption (design-guess demotion).
