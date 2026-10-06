@@ -1,0 +1,77 @@
+# Rust Auditor
+
+A security agent for Solana programs written in Rust - findings in minutes, not weeks.
+
+Covers Anchor, native `solana-program` and Pinocchio programs. It runs the same engine as the
+[solidity-auditor](../solidity-auditor/) - 12 parallel attacker agents, dedup, a four-gate
+judge, loop mode and a findings memory - with every agent rewritten for the Solana account
+model: missing signer and owner checks, account type confusion, PDA seed collisions and
+non-canonical bumps, arbitrary CPI, stale accounts after CPI, closed-account revival,
+Token-2022 extensions, oracle staleness and integer overflow in release builds.
+
+Built for:
+
+- **Solana devs** who want a security check before every commit
+- **Security researchers** looking for fast wins before a manual review
+- **Just about anyone** who wants an extra pair of eyes.
+
+Not a substitute for a formal audit - but the check you should never skip.
+
+## Usage
+
+```
+Install https://github.com/pashov/skills/ and run rust auditor on the codebase
+```
+
+```
+run rust auditor on *specified files*
+```
+
+```
+update skill to latest version
+```
+
+More than one run per scan is loop mode. Each run is a full audit, and every run after the first is
+told what the earlier ones found, so it hunts new ground instead of the same bugs. You get one
+report at the end, not one per run.
+
+```
+run rust auditor in loop mode
+```
+
+## What it scans
+
+By default, the `.rs` files of every on-chain program crate - a crate whose `[dependencies]`
+name `anchor-lang`, `solana-program`, `pinocchio` or a related framework crate - plus Rust
+deploy and admin scripts under `scripts/`, `deploy/`, `admin/` and `src/bin/`. It skips
+`target/`, `.anchor/`, `node_modules/`, `test-ledger/`, `migrations/`, tests, benches, fuzz
+harnesses and off-chain client crates. Name any file on the command line to scan it anyway,
+including TypeScript deploy scripts.
+
+Every agent also sees a **Build context** header: which framework each crate uses, the exact
+framework versions, and whether release builds have `overflow-checks` on (Cargo's release
+default is off, so integer overflow wraps in the deployed program).
+
+## The 12 agents
+
+| # | Agent | Focus |
+| - | ----- | ----- |
+| 1 | math-precision | Wrapping arithmetic without `overflow-checks`, `as` truncation, rounding direction, decimals, share inflation |
+| 2 | access-control | Missing signers, init front-running, PDA authorities that sign for anyone, signer forwarding through CPI |
+| 3 | economic-security | Pyth / Switchboard staleness and spoofing, Token-2022 extensions, flash loans, address squatting, compute exhaustion |
+| 4 | execution-trace | Stale accounts after CPI, write-back clobbering, duplicate accounts, instruction composition and introspection |
+| 5 | invariant | Conservation laws, donation, closed-account revival and re-creation, rent and `realloc` |
+| 6 | periphery | Validation helpers, layouts and deserialisation, `unsafe`, feature-flagged checks, hardcoded IDs |
+| 7 | first-principles | Assumptions with no name - identity, ordering, freshness, existence |
+| 8 | asymmetry | Paired instructions, Accounts-struct constraint diffs, Token vs Token-2022 and SOL vs SPL branches |
+| 9 | account-validation | Every account of every instruction against eleven questions, every CPI, `remaining_accounts`, instruction data |
+| 10 | numerical-gap | Seams between precision, invariants and edges |
+| 11 | trust-gap | Seams between access, economics and asymmetry |
+| 12 | flow-gap | Seams between execution, external programs and program intent |
+
+## Tips
+
+- **Target hot programs.** Rather than scanning an entire repo, point the tool at the instruction files you're actively changing - plus `state.rs` and the `lib.rs` that dispatches them. Smaller scope means denser context for each agent and higher-signal findings.
+- **Use loop mode.** LLM output is non-deterministic — each pass can surface different vulnerabilities. Three passes is a good default: the later ones know what the earlier ones found, and you still get a single report.
+- **Read the report file.** Long scans print a short summary in the terminal; every finding and its fix is in `full-report.md`.
+- **Ignore `.rust-auditor/` in git.** Every scan writes its run files there, and `--memory` keeps a findings ledger there.
