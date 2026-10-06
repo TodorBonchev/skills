@@ -1,0 +1,46 @@
+{
+  "skill_name": "rust-auditor",
+  "notes": "Scorable benchmark targets with documented bugs. See benchmarks.md for commits, scope and the full known-bug list. Each prompt points the skill at a cloned corpus target; expected_output lists the documented bugs a run should surface (recall) without flagging the paired secure variant (precision). Re-pin commits before scoring.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "sec-template-core-anchor",
+      "prompt": "Run rust auditor on the vulnerable programs in {TARGET_PROJECT_PATH} (Ubuntu-Technologies/solana-security-template @cb48608): signer-authorization, owner-check, account-type-mismatch, insecure-init, duplicate-accounts, pda-security, account-close, arithmetic-overflow.",
+      "expected_output": "High findings matching the documented class per module: missing signer (B1), missing owner (B2), type cosplay (B3), re-init (B4), duplicate mutable accounts (B6), non-canonical/predictable PDA (B7), manual-close revival (B8), unchecked overflow (B10). No finding on the paired secure.rs variants.",
+      "files": ["programs/signer-authorization/src/vulnerable.rs", "programs/owner-check/src/vulnerable.rs", "programs/account-type-mismatch/src/vulnerable.rs", "programs/insecure-init/src/vulnerable.rs", "programs/duplicate-accounts/src/vulnerable.rs", "programs/pda-security/src/vulnerable.rs", "programs/account-close/src/vulnerable.rs", "programs/arithmetic-overflow/src/vulnerable.rs"],
+      "assertions": ["B1 missing-signer on signer-authorization", "B2 missing-owner on owner-check", "B3 type-cosplay on account-type-mismatch", "B4 reinit on insecure-init", "B6 duplicate-mutable on duplicate-accounts", "B7 pda on pda-security", "B8 manual-close on account-close", "B10 overflow on arithmetic-overflow", "no findings on *secure.rs"]
+    },
+    {
+      "id": 1,
+      "name": "sec-template-new-classes",
+      "prompt": "Run rust auditor on the account-griefing, authority-transfer, account-reloading, remaining-accounts and amm/buggy-amm programs in {TARGET_PROJECT_PATH} (solana-security-template @cb48608).",
+      "expected_output": "Leads/findings for: account-creation DoS via predictable init PDA (B13); single-step authority transfer (B14); stale-after-CPI read (B11); unvalidated remaining_accounts (B5-adjacent); and in buggy-amm weak PDA seeds (B7) + unchecked overflow (B10) + missing slippage / ignored min_out (B16).",
+      "files": ["programs/account-griefing/src/vulnerable.rs", "programs/authority-transfer/src/vulnerable.rs", "programs/account-reloading/src/vulnerable.rs", "programs/remaining-accounts/src/vulnerable.rs", "programs/amm/buggy-amm/src/instructions/swap.rs"],
+      "assertions": ["B13 init-DoS on account-griefing", "B14 single-step-authority on authority-transfer", "B11 stale-after-cpi on account-reloading", "B5 unvalidated remaining_accounts on remaining-accounts", "B16 missing-slippage on buggy-amm swap"]
+    },
+    {
+      "id": 2,
+      "name": "sec-patterns-anchor-and-pinocchio",
+      "prompt": "Run rust auditor on the Anchor and Pinocchio vulnerable variants in {TARGET_PROJECT_PATH} (Abdullateef1x/solana-security-patterns @4646ebe).",
+      "expected_output": "Each pattern flagged in both anchor/ and pinocchio/ vulnerable.rs: missing signer (B1), missing has_one link (B1/B7), unsafe arithmetic (B10), insecure PDA (B7), CPI authority misuse / user-controlled transfer authority (B5). Tests account-map + native/Pinocchio manual-validation review; not the --poc build path (repo may not build).",
+      "files": ["programs/missing-signer-check/pinocchio/src/vulnerable.rs", "programs/missing-has-one/pinocchio/src/vulnerable.rs", "programs/unsafe-arithmetic/pinocchio/src/vulnerable.rs", "programs/insecure-pda/pinocchio/src/vulnerable.rs", "programs/cpi-authority-misuse/pinocchio/src/vulnerable.rs"],
+      "assertions": ["B1 on missing-signer-check (both frameworks)", "B7/B1 on missing-has-one", "B10 on unsafe-arithmetic", "B7 on insecure-pda", "B5 on cpi-authority-misuse"]
+    },
+    {
+      "id": 3,
+      "name": "escrow-pinocchio-destination-validation",
+      "prompt": "Run rust auditor on the p-escrow Pinocchio program in {TARGET_PROJECT_PATH} (solana-security-template @cb48608).",
+      "expected_output": "A High finding that the refund destination is not validated against the stored maker, letting a refund be redirected to an attacker (destination/recipient validation, B15/L2) — a native/Pinocchio manual-validation miss.",
+      "files": ["programs/p-escrow/src/instructions"],
+      "assertions": ["refund destination not checked against escrow.maker"]
+    },
+    {
+      "id": 4,
+      "name": "halborn-ctf-native-noise-check",
+      "prompt": "Run rust auditor on the HalbornCTF_Rust_Solana native program in {TARGET_PROJECT_PATH} (HalbornSecurity/CTFs @684f1af).",
+      "expected_output": "A clean run on a native (non-Anchor) program: the account-map and native/Pinocchio review produce sane leads over hand-rolled account handling without crashing. Bugs are undisclosed (CTF); scored for robustness and plausible leads, not against a fixed answer key.",
+      "files": ["HalbornCTF_Rust_Solana/ctf_game/ctf/src/processor.rs", "HalbornCTF_Rust_Solana/ctf_game/ctf/src/instructions.rs", "HalbornCTF_Rust_Solana/ctf_game/ctf/src/state.rs"],
+      "assertions": ["no crash on native program", "account-map emits native handler rows"]
+    }
+  ]
+}
