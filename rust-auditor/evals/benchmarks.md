@@ -11,7 +11,7 @@ upstream repos move. Loss figures and severities are the source's own. Education
 severity by bug class (the vulnerable module is deliberately exploitable); audit reports use the
 auditor's severity.
 
-Corpus clones used to build this file live under `/workspace/solana-sec-corpus/` (not committed).
+Targets are not vendored: clone each repo below and check out the pinned commit with `git archive` (§0).
 
 **Two kinds of expected bug.** Rows marked **source** are documented by the target itself (its
 README, comments or audit report). Rows marked **found-by-skill** were raised by a rust-auditor
@@ -58,6 +58,8 @@ python3 "$SKILL/evals/strip-comments.py" --check --list scope.txt      # exit 0 
 
 ## 1. Ubuntu-Technologies/solana-security-template — `@cb48608`
 
+<https://github.com/Ubuntu-Technologies/solana-security-template>
+
 Anchor (+ Pinocchio) vulnerable-vs-secure modules, each with LiteSVM tests; AMM adds Trident
 fuzzing. Scope for each row = `programs/<module>/src/vulnerable.rs` (+ `state.rs`, `lib.rs`); the
 matching `secure.rs` is the negative control **for that module's documented bug only** — a run
@@ -67,7 +69,7 @@ should not raise the documented bug on it. Several secure variants carry **other
 **Build context matters here.** The root `Cargo.toml` sets `[profile.release] overflow-checks =
 true` and `exclude = ["tests", "programs/amm"]`; `programs/amm/Cargo.toml` is its **own** workspace
 with no `overflow-checks`, so `buggy-amm` / `secure-amm` wrap on overflow and every other module
-panics. The v1.3 Build context reports this per workspace.
+panics. The Build context reports this per workspace.
 
 Documented bug per module (status re-checked in code at `@cb48608`, 2026-10-06):
 
@@ -90,8 +92,8 @@ Documented bug per module (status re-checked in code at `@cb48608`, 2026-10-06):
 
 ### 1b. Found-by-skill additions — `solana-security-template @cb48608`
 
-Raised by the rust-auditor v1.2 benchmark run (2026-10-06) and **re-confirmed by hand in the code**
-at `@cb48608` for v1.3. **Not documented by the source.** Location = file and instruction; the
+Raised by an earlier rust-auditor run and **re-confirmed by hand in the code** at `@cb48608`.
+**Not documented by the source.** Location = file and instruction; the
 evidence column names the lines that prove it.
 
 | ID | Location (variant) | Issue | Evidence | Class | Severity (suggested) |
@@ -104,13 +106,15 @@ evidence column names the lines that prove it.
 | T6 | `account-type-mismatch` `init_user` / `init_admin` (`lib.rs`) | no signer and no discriminator / is-initialized check: any program-owned account (a live `User` or `Admin`) is re-written by anyone | owner check only, then raw write of a fresh struct | B4 | High |
 | T7 | `account-type-mismatch` `process_action` (**vulnerable and secure**) | hand offsets misread the `#[repr(C)]` layout: the key is read at `data[1..33]` and the balance at `33..41`, but `User` is `discriminator@0, _padding@1..8, balance@8..16, pubkey@16..48`. The key check compares padding + balance bytes, so it never passes for a real user — the instruction fails for every caller, and the module's missing-signer bug is **unreachable** | `&data[1..33]`, `data[33..41]` vs `state.rs` | correctness (offset) | Low (correctness lane) |
 | T8 | `multisig-payer` `vote` | any signer votes any number of times; no voter record, no membership check | `yes_votes += 1` with only `voter: Signer` | B1 / logic | Medium |
-| T9 | `p-escrow` `process_secure_refund` | requires `destination == caller` (the maker's wallet) and then token-transfers to it; a wallet is not a token account, so the "secure" refund fails for every caller and the escrowed tokens cannot be refunded | `destination.key() != caller.key()` → `Err`; `Transfer { to: destination }` | correctness → locked funds | Medium |
+| T9 | `p-escrow` `process_secure_refund` | requires `destination == caller` (the maker's wallet) and then token-transfers to it; a wallet is not a token account, so the "secure" refund fails for every caller and the escrowed tokens cannot be refunded | `destination.key() != caller.key()` → `Err`; `Transfer { to: destination }` | locked funds (always-failing refund) | Medium |
 
 Scoring note: with these rows, "no finding on `secure.rs`" is **wrong** for `duplicate-accounts`,
 `owner-check`, `account-type-mismatch`, `p-escrow` and `amm/secure-amm`. The negative control holds
 only for each module's documented bug.
 
 ## 2. Abdullateef1x/solana-security-patterns — `@4646ebe`
+
+<https://github.com/Abdullateef1x/solana-security-patterns>
 
 Five patterns, **each in Anchor and Pinocchio** (scope = `programs/<pattern>/{anchor,pinocchio}/src/vulnerable.rs`).
 Note: the repo warns these may not `anchor build` (dependency/IDL drift) — they score the account-map
@@ -126,6 +130,8 @@ Note: the repo warns these may not `anchor build` (dependency/IDL drift) — the
 
 ## 3. Xzavior34/solana-security-secrets — `@a1963e7`
 
+<https://github.com/Xzavior34/solana-security-secrets>
+
 Educational site + one Anchor program (`anchor/programs/security_secrets/src/lib.rs`) demonstrating
 five classes: signer authorization (B1), type cosplay (B3), PDA verification (B7), owner check (B2),
 integer overflow (B10). Scope = that `lib.rs`. Severity: High by class. Contributes the CEI
@@ -133,12 +139,16 @@ mental model and the Anchor-vs-Pinocchio comparison, not new bug classes.
 
 ## 4. HalbornSecurity/CTFs — HalbornCTF_Rust_Solana — `@684f1af`
 
+<https://github.com/HalbornSecurity/CTFs>
+
 A **native** (non-Anchor) Solana program: `HalbornCTF_Rust_Solana/ctf_game/ctf/src/{processor,instructions,state,lib}.rs`.
 A good native/manual-validation target. **Expected bugs: not published** — it is a CTF requiring a
 PoC, so no itemized findings are listed here (not fabricated). Use it to check the account-map and
 the native/Pinocchio review do not crash and produce sane leads on hand-rolled account handling.
 
 ## 5. Adevar Labs audit reports (external repos; findings documented in the report)
+
+<https://github.com/AdevarLabs/audit-reports>
 
 Scope = the audited repo at the commit the report pins; known findings = the report's finding IDs,
 severities and file locations. Summarize, do not copy. From `AdevarLabs/audit-reports @d51d21e`:
@@ -164,8 +174,8 @@ severities and file locations. Summarize, do not copy. From `AdevarLabs/audit-re
   whitelist ops**; #2 retroactive fee application; #3 imprecise multiplier → insolvency; #4 swap
   doesn't forbid same-token swap; #5 `m_ext` init front-running; #6 misaligned Anchor constraint on
   the swap source token account.
-  **Found-by-skill additions** (v1.2 benchmark run, re-confirmed by hand at `25e29e1`; not report
-  findings — each is corroborated by a change in `fc4d934`):
+  **Found-by-skill additions** (an earlier rust-auditor run, re-confirmed by hand at `25e29e1`; not
+  report findings — each is corroborated by a change in `fc4d934`):
   - **M0-A1** `m_ext` `wrap` / `unwrap` / `sync` require the vault's `Earner` account
     (`seeds = [EARNER_SEED, vault_m_token_account.key()]`, `seeds::program = EARN_PROGRAM`) to read
     the index; if the Earn program removes the vault as an earner, every wrap, unwrap and sync
@@ -178,6 +188,8 @@ severities and file locations. Summarize, do not copy. From `AdevarLabs/audit-re
     singleton — first caller wins (init front-running, the `ext_swap` twin of #5; Medium).
 
 ## 6. anza-xyz/security-audits — core-component reports — `@4d5d71e`
+
+<https://github.com/anza-xyz/security-audits>
 
 Scope = the component at the audited version; these are **negative/robustness controls** (core code,
 mostly clean):
@@ -192,6 +204,8 @@ mostly clean):
 
 ## 7. 0xMacro/awesome-solana-security — competitive-audit targets — `@24f792c`
 
+<https://github.com/0xMacro/awesome-solana-security>
+
 Linked First Flights with documented results (itemized findings on the linked report pages; only the
 verified aggregate counts are recorded here, not fabricated specifics):
 
@@ -205,22 +219,18 @@ commit and the per-finding list is pulled from the published report.
 
 ## 8. Leakage hygiene — targets the skill has already seen
 
-A benchmark measures generalisation only on code the skill has not been tuned on. Record every
-place the skill's own references name a target here, and score those targets as **fit, not
-generalisation**:
+A benchmark measures generalisation only on code the skill has not been tuned on. Every place the
+skill's own references name a target is recorded here; score those targets as **fit, not
+generalisation**, and do not add a reference entry that cites a held-out target.
 
 - `references/solana-exploit-patterns.md` **B13** (account-creation griefing) and **B14**
   (single-step authority transfer) cite `solana-security-template` programs by name.
 - Part C of the same file cites the **M0 MExtensions** report: **L8** = #1, **L4** = #2, **L9** = #3,
-  **L7** = #5, **L10** = #6. Only #4 is not cited — and **B17** (same-asset round trip, added in
-  v1.3) generalises exactly that miss.
-- **v1.3 was tuned on the v1.2 grading of §1 and §5**: the correctness lane (T7, T9), the
-  offset check and `offset-mismatch` (T7), `key-compared-no-signer` (T5), the honest-admin carve-out
-  (M0-A2, B14), singleton folding (M0 noise) and per-workspace overflow detection (`programs/amm`)
-  all came from that grading. A v1.3 run on these targets therefore over-states recall. For a
-  generalisation number, add a held-out target the skill has never been graded on (§2
-  `solana-security-patterns` has not been graded yet; the §7 First Flights once checked out), and
-  do not cite it in any reference file.
+  **L7** = #5, **L10** = #6. #4 (same-token swap) is not cited, but **B17** (same-asset round trip)
+  generalises it.
+- The correctness lane, the hand-offset check (`offset-mismatch`), `key-compared-no-signer`, the
+  honest-admin rule, singleton folding and per-workspace overflow detection were developed while
+  grading §1 and §5, so runs on those targets over-state recall. §2 (`solana-security-patterns`)
+  and the §7 First Flights have not been graded and are the held-out candidates.
 - Strip comments before every run (§0). Template comments name the bug class in the line that
   holds it.
-

@@ -1,11 +1,10 @@
 {
   "skill_name": "rust-auditor",
-  "notes": "Scorable benchmark targets with documented bugs. See benchmarks.md for commits, scope and the full known-bug list. Each prompt points the skill at a cloned corpus target; expected_output lists the bugs a run should surface (recall). BEFORE EVERY RUN: snapshot the pinned commit with `git archive` (no history) and strip comments from the in-scope files with `python3 evals/strip-comments.py --in-place --list scope.txt`, then `--check` (benchmarks.md section 0) - template comments name the bugs. Assertions tagged [source] are documented by the target; [found-by-skill] were raised by a rust-auditor run and re-confirmed by hand in the code at the pinned commit, not documented by the source; [not-present] mark a documented bug the code does not contain - a finding there is a false positive. A paired secure.rs is a negative control only for its module's documented bug (several secure variants carry real bugs, benchmarks.md 1b). Targets cited by the skill's own references (sec-template B13/B14, M0 in Part C) measure fit, not generalisation (benchmarks.md section 8). Re-pin commits before scoring.",
   "evals": [
     {
       "id": 0,
       "name": "sec-template-core-anchor",
-      "prompt": "Run rust auditor on the vulnerable programs in {TARGET_PROJECT_PATH} (Ubuntu-Technologies/solana-security-template @cb48608, comments stripped): signer-authorization, owner-check, account-type-mismatch, insecure-init, duplicate-accounts, pda-security, account-close, arithmetic-overflow.",
+      "prompt": "Run rust auditor on the vulnerable programs in {TARGET_PROJECT_PATH} (Ubuntu-Technologies/solana-security-template @cb48608, comments stripped per evals/benchmarks.md section 0): signer-authorization, owner-check, account-type-mismatch, insecure-init, duplicate-accounts, pda-security, account-close, arithmetic-overflow.",
       "expected_output": "High findings matching the documented class per module: missing signer (B1), missing owner (B2), type cosplay (B3), re-init (B4), duplicate mutable accounts (B6), non-canonical/predictable PDA (B7). account-close has NO revival bug (Anchor 0.32.1 `close = owner` zeroes and reassigns) - a B8 finding there is a false positive. arithmetic-overflow: unchecked arithmetic PANICS (root overflow-checks = true), so at most a Low DoS, not a wrapping High; the ignored `_min_out` (B16) is the real bug. Found-by-skill (re-confirmed in code): duplicate-accounts authority never bound to from_account.owner; owner-check read_config compares the caller key with no is_signer; account-type-mismatch process_action reads the key at data[1..33] against a repr(C) layout with the key at 16..48, so it always fails (correctness, Low). No finding of a module's documented bug on its paired secure.rs.",
       "files": [
         "programs/signer-authorization/src/vulnerable.rs",
@@ -15,7 +14,11 @@
         "programs/duplicate-accounts/src/vulnerable.rs",
         "programs/pda-security/src/vulnerable.rs",
         "programs/account-close/src/vulnerable.rs",
-        "programs/arithmetic-overflow/src/vulnerable.rs"
+        "programs/arithmetic-overflow/src/vulnerable.rs",
+        "programs/owner-check/src/lib.rs",
+        "programs/owner-check/src/state.rs",
+        "programs/account-type-mismatch/src/lib.rs",
+        "programs/account-type-mismatch/src/state.rs"
       ],
       "assertions": [
         "[source] B1 missing-signer on signer-authorization",
@@ -36,7 +39,7 @@
     {
       "id": 1,
       "name": "sec-template-new-classes",
-      "prompt": "Run rust auditor on the account-griefing, authority-transfer, account-reloading, remaining-accounts and amm/buggy-amm programs in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped).",
+      "prompt": "Run rust auditor on the account-griefing, authority-transfer, account-reloading, remaining-accounts and amm/buggy-amm programs in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped per evals/benchmarks.md section 0).",
       "expected_output": "Leads/findings for: account-creation DoS via predictable init PDA (B13); single-step authority transfer (B14); unvalidated remaining_accounts (B5-adjacent); and in buggy-amm weak PDA seeds (B7) + unchecked overflow that WRAPS (the programs/amm workspace has no overflow-checks) (B10) + missing slippage / ignored min_out (B16). account-reloading has NO stale-after-CPI bug (vulnerable.rs makes no CPI) - a B11 finding there is a false positive. Found-by-skill (re-confirmed in code): buggy-amm deposit mints the caller's `amount` of LP regardless of the x/y paid (free LP with max_x = max_y = 0).",
       "files": [
         "programs/account-griefing/src/vulnerable.rs",
@@ -62,6 +65,11 @@
       "prompt": "Run rust auditor on the Anchor and Pinocchio vulnerable variants in {TARGET_PROJECT_PATH} (Abdullateef1x/solana-security-patterns @4646ebe).",
       "expected_output": "Each pattern flagged in both anchor/ and pinocchio/ vulnerable.rs: missing signer (B1), missing has_one link (B1/B7), unsafe arithmetic (B10), insecure PDA (B7), CPI authority misuse / user-controlled transfer authority (B5). Tests account-map + native/Pinocchio manual-validation review; not the --poc build path (repo may not build).",
       "files": [
+        "programs/missing-signer-check/anchor/src/vulnerable.rs",
+        "programs/missing-has-one/anchor/src/vulnerable.rs",
+        "programs/unsafe-arithmetic/anchor/src/vulnerable.rs",
+        "programs/insecure-pda/anchor/src/vulnerable.rs",
+        "programs/cpi-authority-misuse/anchor/src/vulnerable.rs",
         "programs/missing-signer-check/pinocchio/src/vulnerable.rs",
         "programs/missing-has-one/pinocchio/src/vulnerable.rs",
         "programs/unsafe-arithmetic/pinocchio/src/vulnerable.rs",
@@ -79,7 +87,7 @@
     {
       "id": 3,
       "name": "escrow-pinocchio-destination-validation",
-      "prompt": "Run rust auditor on the p-escrow Pinocchio program in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped).",
+      "prompt": "Run rust auditor on the p-escrow Pinocchio program in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped per evals/benchmarks.md section 0).",
       "expected_output": "A High finding that the refund destination is not validated against the stored maker, letting a refund be redirected to an attacker (destination/recipient validation, B15/L2) - a native/Pinocchio manual-validation miss. Found-by-skill (re-confirmed in code): process_secure_refund requires destination == caller (the maker's wallet) and token-transfers to it, so the secure refund fails for every caller and escrowed tokens cannot be refunded.",
       "files": [
         "programs/p-escrow/src/instructions"
@@ -107,7 +115,7 @@
     {
       "id": 5,
       "name": "m0-mextensions-pre-fix",
-      "prompt": "Run rust auditor on the ext_swap and m_ext programs in {TARGET_PROJECT_PATH} (m0-foundation/solana-extensions at the PRE-FIX commit 25e29e1, snapshot with git archive, comments stripped).",
+      "prompt": "Run rust auditor on the ext_swap and m_ext programs in {TARGET_PROJECT_PATH} (m0-foundation/solana-extensions at the PRE-FIX commit 25e29e1, snapshot with git archive, comments stripped per evals/benchmarks.md section 0).",
       "expected_output": "The M0 MExtensions report findings at 25e29e1 (the report links pin AdevarLabs/solana-extensions@25e29e1c4564b12cb811e9461b44b5305a824ac9; fixed later by fc4d934 - auditing HEAD scores nothing): #1 Critical missing admin access control on ext_swap whitelist ops; #2 retroactive fee application; #3 imprecise multiplier toward insolvency; #4 swap does not forbid a same-token swap; #5 m_ext init front-running; #6 misaligned Anchor constraint on the swap source token account. Found-by-skill (re-confirmed at 25e29e1, corroborated by fc4d934): wrap/unwrap/sync depend on the vault's Earner account; set_m_mint keeps the old mint's stored index; ext_swap initialize_global is first-caller-wins. Note: the skill's Part C cites #1/#2/#3/#5/#6, so this target measures fit, not generalisation.",
       "files": [
         "programs/ext_swap/src",
@@ -128,7 +136,7 @@
     {
       "id": 6,
       "name": "sec-template-secure-variants-real-bugs",
-      "prompt": "Run rust auditor on the secure variants in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped): duplicate-accounts, owner-check, account-type-mismatch, p-escrow, amm/secure-amm.",
+      "prompt": "Run rust auditor on the secure variants in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped per evals/benchmarks.md section 0): duplicate-accounts, owner-check, account-type-mismatch, p-escrow, amm/secure-amm.",
       "expected_output": "The secure variants fix their module's documented bug but still carry real bugs (found-by-skill, re-confirmed in code): duplicate-accounts authority not bound to from_account.owner (T3); owner-check read_config with no is_signer (T5); account-type-mismatch process_action offsets misread the layout so it always fails (T7, correctness); p-escrow secure refund always fails (T9); secure-amm deposit mints amount LP regardless of x/y (T1) and divides by an integer ratio that is 0 when vault_x < vault_y (T2, DoS). No finding of the module's documented bug.",
       "files": [
         "programs/duplicate-accounts/src/secure.rs",
