@@ -3,16 +3,18 @@
 A security agent for Solana programs written in Rust - findings in minutes, not weeks.
 
 Covers Anchor, native `solana-program` and Pinocchio programs. It runs the same engine as the
-[solidity-auditor](../solidity-auditor/) - 12 parallel attacker agents, dedup, a four-gate
-judge, loop mode and a findings memory - with every agent rewritten for the Solana account
-model. Before the agents run, a **pre-scan account map** walks every instruction (accounts and
-their signer/owner/PDA constraints, cross-program calls, state writes) and auto-highlights review
-leads, and each agent carries a catalogue of **real Solana exploit patterns** - Wormhole, Cashio,
-Mango, Nirvana and more - mapped to the bug class it hunts, plus **lessons distilled from recent
-public audit reports** (GLAM, Indentura, M0, Neodyme's P-Token checklist) and deeper **native /
-Pinocchio manual-validation** coverage for programs that don't use Anchor. The agents cover: missing signer and owner checks, account type confusion, PDA seed collisions and
-non-canonical bumps, arbitrary CPI, stale accounts after CPI, closed-account revival,
-Token-2022 extensions, oracle staleness and integer overflow in release builds.
+[solidity-auditor](../solidity-auditor/) - 12 parallel attacker agents, dedup, a four-gate judge,
+loop mode and a findings memory - with every agent rewritten for the Solana account model.
+
+Two things are specific to Solana:
+
+- **Account map.** Before the agents run, a script maps every instruction - its accounts and their
+  signer / owner / PDA constraints, its cross-program calls and the state it writes - and highlights
+  review leads such as an authority written with no signer check or a CPI to a program ID that is
+  not pinned.
+- **Exploit patterns.** Every agent carries a catalogue of real Solana incidents (Wormhole, Cashio,
+  Crema, Mango, Loopscale and more), published bug classes and lessons from public audit reports,
+  each with its source, mapped to the agent that hunts it.
 
 Built for:
 
@@ -64,7 +66,8 @@ By default, the `.rs` files of every on-chain program crate - a crate whose `[de
 name `anchor-lang`, `solana-program`, `pinocchio` or a related framework crate - plus Rust
 deploy and admin scripts under `scripts/`, `deploy/`, `admin/` and `src/bin/`. It skips
 `target/`, `.anchor/`, `node_modules/`, `test-ledger/`, `migrations/`, tests, benches, fuzz
-harnesses and off-chain client crates. Name any file on the command line to scan it anyway,
+harnesses and off-chain client crates (RPC crates under `[dev-dependencies]` or a host-only
+`cfg(not(target_os = "solana"))` table do not make a program a client). Name any file on the command line to scan it anyway,
 including TypeScript deploy scripts.
 
 Every agent also sees a **Build context** header: which framework each crate uses, the exact
@@ -94,39 +97,24 @@ default is off, so integer overflow wraps in the deployed program). The setting 
 - **Target hot programs.** Rather than scanning an entire repo, point the tool at the instruction files you're actively changing - plus `state.rs` and the `lib.rs` that dispatches them. Smaller scope means denser context for each agent and higher-signal findings.
 - **Use loop mode.** LLM output is non-deterministic — each pass can surface different vulnerabilities. Three passes is a good default: the later ones know what the earlier ones found, and you still get a single report.
 - **Read the report file.** Long scans print a short summary in the terminal; every finding and its fix is in `full-report.md`.
-- **Benchmarks.** `rust-auditor/evals/` lists public codebases and audit reports with documented bugs (and an `evals.json` in the repo's eval convention), so runs can be scored for recall and false positives over time. Strip comments from the in-scope files of a benchmark copy first — template comments name the bugs: `python3 rust-auditor/evals/strip-comments.py --in-place --list scope.txt` (see `evals/benchmarks.md` §0).
+- **Benchmarks.** `evals/` lists public Solana codebases and audit reports with documented bugs, so a run can be scored for recall and false positives. Strip comments from a benchmark copy first - educational repos name the bug in a comment (`evals/benchmarks.md`, section 0).
 - **Ignore `.rust-auditor/` in git.** Every scan writes its run files there, and `--memory` keeps a findings ledger there.
 
 ## Changelog
 
-**1.3**
-- **Correctness lane.** An instruction that fails for every caller, an always-true or never-true
-  constraint, a byte offset that misreads the struct layout, or a two-leg route with no
-  `from != to` is now a finding (confidence 75, with a fix, title `Correctness: …`) instead of a
-  lead — `judging.md` Gate 4, mirrored in `dedup-and-assembly.md`, `report-formatting.md`,
-  `shared-rules.md` and both agent prompts.
-- **Admin rules.** A stubbed privileged instruction (`msg!` / `Ok(())`) behind a real access
-  defect is judged by the impact its name states. An honest admin call that is irreversible
-  (single-step authority transfer, unbounded bricking setter) or retroactive (fee / index / mint
-  change with no settle) clears gate 3 without an unprivileged amplifier.
-- **Layout check.** Agents lay hand-coded offsets against the `#[repr(C)]` / packed layout;
-  `account-map.py` raises `offset-mismatch`, and `key-compared-no-signer` for a key compared with
-  stored data and no `is_signer`.
-- **Rounding.** `f64` rounding past 2^53 and float-to-int saturation in the math-precision and
-  numerical-gap agents and in judging's safe-pattern caveat; new pattern **B17** same-asset round
-  trip (self-swap) for the asymmetry, flow-gap, economic and account-validation agents.
-- **Per-workspace overflow checks.** The Build context walks each crate up to its own workspace
-  root (honouring `exclude`) and prints every root when they differ.
-- **Account-map noise.** Constant-seed singletons fold to one `singleton-init` (or
-  `singleton-write`) lead, constant / parent-scoped CPI signer seeds to one `global-signer` lead
-  per program; foreign (`seeds::program`) and parent-keyed child PDAs raise nothing;
-  `stale-after-cpi` skips `lamports()` reads and System-program-only CPIs; signer-seed
-  expansion now follows `let seeds = &[ctx.accounts…]`, `Signer::from(&seeds)` and
-  `signer = &[&seeds[..]]` (Pinocchio caller-chosen bumps are caught). M0: 41 → 22 leads.
-- **Benchmarks.** Three template rows corrected (account-close and account-reloading not
-  present, arithmetic-overflow panics), found-by-skill additions re-confirmed in code, M0 pinned
-  to the pre-fix commit `25e29e1`, leakage hygiene, and `evals/strip-comments.py`.
+**1.4** - Solana facts in the agents checked against Anchor, SPL Token, Pinocchio and System-program
+source (account close, write-back, `init_if_needed`, bumps, rent, discriminator overrides,
+Token-2022 extensions, instruction introspection, return data). New bug classes B18-B22: exit paths
+that depend on an account another party controls, `close =` to an unconstrained destination, System
+transfers out of a data-carrying PDA, token custody that leaves a `close_authority` behind, and
+variable-length seeds that run together. New account-map leads (`foreign-dependency`,
+`close-to-unchecked`), raw writes through borrowed account data counted as state changes, signer
+leads that must each end in a finding or a stated rejection, and a worked-example rule for float
+rounding direction. PoC demotion now survives a multi-pass report, and discovery no longer drops a
+program that lists RPC crates in a host-only target table. Version stamps and tuning notes removed
+from the agent files; pattern ownership is consistent between the catalogue and the agents.
 
-**1.2** — audit lessons (Part C), bug classes B13–B16, native/Pinocchio depth, `check-deferred`
-lead, benchmarks. **1.1** — `--poc` verification, account map, exploit-pattern catalogue.
-**1.0** — the solidity-auditor engine ported to Rust/Solana with 12 agents.
+**1.3** - Correctness lane, honest-admin and stubbed-instruction rules, per-workspace overflow
+checks, hand-offset layout check, same-asset round trip (B17). **1.2** - Lessons from public audit
+reports (Part C), B13-B16, native and Pinocchio depth. **1.1** - `--poc` verification, account map,
+exploit-pattern catalogue. **1.0** - the solidity-auditor engine ported to Rust and Solana.
