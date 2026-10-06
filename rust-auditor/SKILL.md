@@ -532,7 +532,7 @@ printf '%s\t%s\n' pass_{K}_failed 1 >> .rust-auditor/runs/{stamp}/scope.tsv
 
 **Steps 4 and 6 are SKIPPED entirely when memory is off.** Every other step runs at any pass count.
 
-**The PoC verification step (`dedup-and-assembly.md` Turn 4 step 3b) is SKIPPED entirely unless `--poc` was passed.** A plain scan runs no builds and labels no finding. When `--poc` is on, it runs once per scan after the last pass has gated, per `{resolved_path}/poc-guide.md`.
+**The PoC verification step (`dedup-and-assembly.md` Turn 4 step 3b) is SKIPPED entirely unless `--poc` was passed.** A plain scan runs no builds and labels no finding. When `--poc` is on, it runs once per scan, on the final pass — after that pass has gated and before its memory tag and run file are written — per `{resolved_path}/poc-guide.md`.
 
 Follow `{resolved_path}/dedup-and-assembly.md`, section **"Turn 4"**, step by step.
 

@@ -169,17 +169,32 @@ fi
 # One winner per key: strongest kind, then highest confidence, then the LATER pass — a later
 # pass read the ledger every earlier pass wrote, so it is the better-informed write-up.
 # k counts every run that raised the key, in either section.
-sort -t $'\t' -k1,1 "$work/index.tsv" | awk -F'\t' '
-  function rank(k) { return (k == "FINDING") ? 1 : 0 }
+#
+# The PoC verdict is the one exception, because it is the scan's last word on a key: `--poc`
+# runs on the final pass only (dedup-and-assembly.md Turn 4 step 3b). A final-pass
+# `poc=NOT_REPRODUCED` lead outranks an earlier pass's FINDING on the same key — otherwise a
+# 3-pass scan resurrects the finding the PoC demoted — and a CONFIRMED / UNVERIFIED label is
+# carried onto whichever block wins, so it is never lost to a higher-confidence earlier write-up.
+sort -t $'\t' -k1,1 "$work/index.tsv" | awk -F'\t' -v OFS='\t' '
+  function rank(k, p) { return (p == "NOT_REPRODUCED") ? 2 : (k == "FINDING") ? 1 : 0 }
   {
     if (!(($5 SUBSEP $1) in seenrun)) { seenrun[$5 SUBSEP $1]=1; k[$1]++ }
+    if ($14 != "-") poc[$1] = $14
     c = ($2 == "-") ? -1 : $2 + 0
-    if (!($1 in best) || rank($3) > br[$1] || (rank($3) == br[$1] && c > bc[$1]) \
-        || (rank($3) == br[$1] && c == bc[$1] && $6 + 0 >= bp[$1])) {
-      best[$1] = $0; br[$1] = rank($3); bc[$1] = c; bp[$1] = $6 + 0
+    r = rank($3, $14)
+    if (!($1 in best) || r > br[$1] || (r == br[$1] && c > bc[$1]) \
+        || (r == br[$1] && c == bc[$1] && $6 + 0 >= bp[$1])) {
+      best[$1] = $0; br[$1] = r; bc[$1] = c; bp[$1] = $6 + 0
     }
   }
-  END { for (key in best) print k[key] "\t" best[key] }
+  END {
+    for (key in best) {
+      n = split(best[key], f, "\t")
+      if (f[14] == "-" && (key in poc)) f[14] = poc[key]
+      line = f[1]; for (i = 2; i <= n; i++) line = line "\t" f[i]
+      print k[key], line
+    }
+  }
 ' > "$work/merged.tsv"
 
 # ---------------------------------------------------------------- the memory tag

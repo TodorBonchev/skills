@@ -382,7 +382,9 @@ this scan's work, however many of its runs saw it.
 
 **Which write-up survives the merge.** One winner per key: strongest kind, then highest
 confidence, then the later pass — a later pass read the ledger every earlier pass wrote, so it
-is the better-informed write-up. **Confidence is untouched by the merge.** A finding three runs
+is the better-informed write-up. The one exception is a `--poc` verdict, the scan's last word on
+a key: a final-pass `poc=NOT_REPRODUCED` lead outranks an earlier pass's finding on the same key,
+and a `CONFIRMED` / `UNVERIFIED` label is carried onto whichever block wins. **Confidence is untouched by the merge.** A finding three runs
 saw keeps the number the runs gave it; repetition is reported on the line, never scored, and
 `seen in 3/3 runs` is there for the reader to weigh.
 

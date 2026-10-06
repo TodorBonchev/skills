@@ -1,11 +1,12 @@
 # Proof-of-concept verification — the `--poc` flag
 
 **Off by default.** A plain scan never reaches this file. `--poc` turns on an **opt-in** step
-that runs after judging (Turn 4) and before the report (Turn 5): for each **High/Critical**
+that runs on the **final pass** of the scan, inside Turn 4 (`dedup-and-assembly.md` step 3b —
+after the gate, before the memory tag and the run file are written): for each **High/Critical**
 finding, the skill tries to write one regression test that demonstrates whether the reported bug
 is real, runs it, and labels the finding by the result. A confirmed bug ships with a failing test
 the developer keeps as a regression test after they fix it; a bug that cannot be reproduced is
-dropped to a lead or rejected, cutting false positives.
+dropped to a lead (`PoC: NOT REPRODUCED`), cutting false positives.
 
 > **This step never touches the user's source or tests.** It writes only under
 > `.rust-auditor/runs/{stamp}/poc/`, and when a build needs the program it copies the repo to a
@@ -154,16 +155,3 @@ need the IDL.
 - Never weaken the gate with a PoC: a CONFIRMED label does not raise confidence above the gate's
   number, and a NOT REPRODUCED demotes rather than deletes. The gate decided severity; the PoC
   decides reproducibility.
-
-## This box
-
-A one-shot end-to-end check of this flow was run on this box against a sealevel-attacks
-closing-accounts example (the `insecure` close with no signer and a manual lamports-to-zero
-"close"). The example was modernized to a current Anchor version because the original repo pins
-Anchor 0.20.1, whose old `getrandom` does not build on the current SBF toolchain — a real
-toolchain-drift case a reviewer will hit, and the reason the PoC step builds a scratch copy and
-reports build failures as `UNVERIFIED` rather than pretending. The LiteSVM test built the program
-with `cargo build-sbf`, loaded the `.so`, funded a victim `Data` account owned by the program,
-and sent the `close` instruction signed only by an unrelated attacker key: the attacker drained
-the victim's lamports and the transaction succeeded — **CONFIRMED**. See the run notes in the
-task report.
