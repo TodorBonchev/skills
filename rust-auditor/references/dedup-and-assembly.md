@@ -32,6 +32,8 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
 
    Merging under one label is only correct when the labels name the **same class of bug**. Two genuinely different bugs in one function keep two labels and stay two records — function isolation is about functions, and this rule is about words.
 
+   **Compare the fixes before you merge two labels (HARD).** Read the `fix:` lines of the findings and leads behind each label. Ask: does applying fix A alone close the path of finding B? If yes, the labels name one bug with alternative fixes — merge, and Fix preservation below prints the alternatives as Option A / B. If no — the fixes change a different check, a different instruction or account, or one blocks the condition at setup while the other re-checks it at use — they are **two bugs**: keep both labels and two records, even when the bodies sound alike. This is `shared-rules.md` "Different fixes needed = separate items", applied before the merge rather than after it.
+
    **Why this is a gate and not a nicety.** The per-function vocabulary that keeps a key stable only constrains what an **earlier scan** wrote. A class discovered mid-scan is constrained by nothing, and a real scan of the solidity-auditor, whose engine this skill shares, proved what follows: three agents in one pass gave one bug three different labels, and a second bug class drew three labels across three passes. In a Solana program the same fork is easy to picture — `missing-owner-check`, `unchecked-account-owner` and `config-owner-not-validated` for one missing `owner == program_id` check. Unfixed, that is three ledger records for one bug, three lines in every future `known-findings.md`, and one bug that is never recognised again. This step is the only thing standing between the fork and the ledger. Canonicalise here and the next pass inherits the canonical label, so the fork closes after one scan.
 
    **MANDATORY — Wide-description (group_key).** Merged group with distinct mechanisms (different `fix:`, code-level cause, or attack path) MUST list every mechanism. No dropping. Same function can have multiple coexisting bugs at the same group_key — all MUST appear.
@@ -64,6 +66,8 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
    ```
 
    **Inline check before printing**: count distinct fixes from raw for this (Program, function). ≥2 distinct but merged shows 1 → violation, add alternatives.
+
+   **Hardening leads stay leads.** A LEAD whose `bug_class` starts with `hardening-` (a missing defence with no path today — see `shared-rules.md`) goes to the Leads section as it is: it is never merged into a finding on the same function, and `judging.md` never promotes it.
 
    **MANDATORY — Completeness (HARD GATE).** Before print: list every unique (Program, function, bug-class) in any raw FINDING/LEAD across the 12 agents. Every unique (Program, function) MUST have ≥1 item in final. Zero = silent drop, fix it. Multiple bug-class within same (Program, function) MAY collapse to one item (wide-description), but the (Program, function) MUST survive. Print inline before report: `Completeness: N unique (Program, function) in raw, N covered in final.`
 

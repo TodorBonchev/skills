@@ -70,6 +70,8 @@ FINDINGs have concrete, unguarded, exploitable attack paths. LEADs have real cod
 
 **A stub is not a defence.** A privileged instruction whose body is only `msg!(..)` / `Ok(())` behind a broken access check is still a FINDING: describe the impact its name and accounts state (`emergency_withdraw` drains the vault), and say `Stubbed: impact as named.`
 
+**Hardening gaps are LEADs, not silence.** A missing defensive check with no exploit path today is still worth one line: a layout version byte that is written but never checked on read, a discriminator or type tag whose valid value equals zeroed memory (`0`), a second loader for an account type that skips the validation the main loader does, an owner check that exists only because a PDA derivation implies it, a program ID compared nowhere because only one program can own the account today. Emit each as a LEAD with `bug_class` starting `hardening-` (`hardening-version-unchecked`) and say in `description:` what a future change would make exploitable. Never a FINDING, never dropped; `judging.md` never promotes them.
+
 **Every FINDING must have a `proof:` field** — concrete values, traces, account lists or state sequences from the actual code. No proof = LEAD, no exceptions.
 
 **One vulnerability per item.** Same root cause = one item. Different fixes needed = separate items.

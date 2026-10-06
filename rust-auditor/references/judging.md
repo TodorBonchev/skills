@@ -31,6 +31,7 @@ Prove an unprivileged actor executes the attack.
 - **retroactive sweep** — an admin update rewrites a pending value already credited.
 - **asymmetric formula** — admin output chains into a formula an unprivileged actor profits from.
 - **access gap** — a missing `Signer`, a missing owner or `has_one` check, a tautological check (`constraint = config.admin == config.admin`), an `initialize` anyone can call first, or an upgrade-authority check that reads a spoofable account (the access mechanism itself is the bug).
+- **privilege passthrough** — the program forwards a user's signer, or a writable account the user owns, in a CPI to a program the **user** did not choose: a hook or plugin the admin stored in config, a program named by a mint extension or a pool, a program the caller supplies. The admin picks the program, but the defect is that the user's authority reaches it — that is an access gap, not an admin action, and it clears even when the hook is admin-set (pattern **B24**). Token-2022's own transfer-hook CPI passes every account read-only and without signer privilege; a hook that receives less than the user's signature is not this amplifier.
 
 No amplifier named → **REJECTED**. Amplifier named → judge it on that unprivileged path.
 
@@ -39,7 +40,7 @@ No amplifier named → **REJECTED**. Amplifier named → judge it on that unpriv
 - **irreversible** — one call that cannot be taken back: a single-step authority transfer that takes effect at once, so a typo, a PDA or a program ID as the new authority loses the role forever (pattern **B14**); a setter with no bounds that bricks the program (a fee of 100 %, a zero divisor, a pause with no unpause path); a mint, vault or oracle switch that strands the balances held under the old one.
 - **retroactive** — one call that rewrites value users already accrued: a fee, rate or index change applied without first settling the accrual under the old value (no `sync` before the write); a mint or index switch that keeps the old stored index.
 
-Score it on the honest path: deduct **-10** (it requires the admin call) and **-15** more when the harm is bounded. The Description names the honest call and says why it cannot be undone, or which accrued value it rewrites. **Not this lane:** a two-step transfer (propose, then accept), a bounded setter, a change that applies only forward, or harm that needs the admin to pick a bad value on purpose — those stay **REJECTED** by the rule above.
+Score it on the honest path: deduct **-10** (it requires the admin call) and **-15** more when the harm is bounded. **Bounded here also means recoverable**: users can still leave by another path (withdraw or close still works under the bad value), or the admin can recover by creating a fresh instance or account that users move to. A config value that simply has no update instruction ("X cannot be changed after creation") is bounded in this sense unless the fixed value locks funds with no exit — and when nothing is lost and nobody is blocked, it is a `hardening-` LEAD, not a finding. This keeps an honest-admin hazard below an unprivileged theft at the same certainty. The Description names the honest call and says why it cannot be undone, or which accrued value it rewrites. **Not this lane:** a two-step transfer (propose, then accept), a bounded setter, a change that applies only forward, or harm that needs the admin to pick a bad value on purpose — those stay **REJECTED** by the rule above.
 
 ## Gate 4 — Impact
 
@@ -107,7 +108,7 @@ never PoC-verified — the budget goes to the findings that matter most.
 
 ## Lead promotion
 
-Before finalizing leads, promote where warranted:
+Before finalizing leads, promote where warranted. **`hardening-` leads are never promoted** — no rule below applies to them: they name a missing defence with no path, and convergence of several agents on one does not make a path.
 
 - **Cross-program echo.** Same root cause confirmed as FINDING in one instruction or program → promote in every instruction and program where the identical pattern appears (the same unchecked account type taken by another instruction, the same seeds used by another PDA).
 - **Multi-agent convergence.** 2+ agents flagged same area, lead was demoted (not rejected) → promote to FINDING at confidence 75.
