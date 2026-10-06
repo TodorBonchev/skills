@@ -24,9 +24,10 @@ You are here for the bugs that REQUIRE two or three of these lenses to see at on
 - A PDA authority shared across user classes — one `[b"authority"]` that signs for both the insurance fund and user vaults — so an action allowed for one class moves the other's value.
 - Token-2022 mint authorities: a mint with a permanent delegate or a freeze authority held by the mint creator, accepted as collateral, so the creator can move or freeze the tokens in the program's vault.
 - Fee or reward accrual that credits the "current" holders or receivers, where the set can be changed by an unprivileged actor (anyone can create a position just before the distribution).
+- An exit path (withdraw, redeem, unwrap, claim) that requires an account owned by **another** program — a registry / earner / allow-list entry, an oracle feed, an integrated protocol's vault or config (account-map `foreign-dependency`, B18). Whoever controls that account (its program, that program's admin, a governance vote, an oracle operator) can close, migrate, re-key or de-list it, and so decides whether — and which — users can exit. That is an authority over this program's funds that its own access model never declared: name the party, say exactly what it can do, and check for a fallback or emergency exit that does not read the account.
 - Rent refunds on close sent to a caller-chosen account instead of the account that paid the rent.
 
-**Privileged actions that hurt without malice (new in v1.3).** The admin-only rule rejects an admin who acts against intent; it does not cover an honest call that cannot be undone or that rewrites value users already accrued (`judging.md` Gate 3, honest-admin hazard). At the access × economics seam, look for a fee, rate, index or mint change applied without first settling the accrual under the old value, and a single-step authority handover. And judge a **stub** by its name: a privileged instruction whose body is only `msg!` / `Ok(())` behind a broken access check carries the impact its name and accounts state (`Stubbed: impact as named.`, -15).
+**Privileged actions that hurt without malice.** The admin-only rule rejects an admin who acts against intent; it does not cover an honest call that cannot be undone or that rewrites value users already accrued (`judging.md` Gate 3, honest-admin hazard). At the access × economics seam, look for a fee, rate, index or mint change applied without first settling the accrual under the old value, and a single-step authority handover. And judge a **stub** by its name: a privileged instruction whose body is only `msg!` / `Ok(())` behind a broken access check carries the impact its name and accounts state (`Stubbed: impact as named.`, -15).
 
 ## Discipline
 
@@ -47,6 +48,7 @@ proof: concrete trace showing the trust gap — authorization step, economic ste
 
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
-- **P2** root-of-trust gap (Cashio). **P6** over-powered admin (Raydium). **P7** insufficient admin check (Solend). **P10** governance capture (Synthetify). - **B7** PDA sharing / confused deputy across the access-economics seam.
-- **New (v1.2):** **B14** single-step authority transfer across the access seam. **L3** a bypassable timelock. **L8** a privileged setter missing an admin check.
-- **New (v1.3):** honest-admin hazards (retroactive fee/index/mint changes, irreversible handovers); stubbed privileged instructions judged by named impact.
+- **P2** root-of-trust gap (Cashio). **P3** a fake account trusted across a seam (Crema). **P6** over-powered admin (Raydium). **P7** insufficient admin check (Solend). **P10** governance capture (Synthetify).
+- **B7** PDA sharing / confused deputy across the access-economics seam. **B14** single-step authority transfer across the access seam. **B18** an external registry, oracle or integration account whose owner can block exits or decide who may exit — an authority this program never declared. **B19** the caller choosing who receives a closed account's lamports, rent that someone else paid included.
+- **L3** a bypassable timelock. **L8** a privileged setter missing an admin check.
+- Honest-admin hazards (retroactive fee/index/mint changes, irreversible handovers); stubbed privileged instructions judged by named impact.

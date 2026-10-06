@@ -78,7 +78,7 @@ Start at **100**, deduct: partial attack path **-20**, bounded non-compounding i
 - `init` (not `init_if_needed`) for accounts that must be created once
 - Anchor `close = target` in a framework version that also zeroes the data and reassigns the account (verify the version in the Build context before you call a close safe)
 - `transfer_checked` with the mint and its decimals; `get_price_no_older_than` with a bounded age and a checked feed ID
-- `load_instruction_at_checked` / `Sysvar<'info, Instructions>` for instruction introspection
+- `load_instruction_at_checked` / `get_instruction_relative` / `Sysvar<'info, Instructions>` for instruction introspection — when the loaded instruction's program ID and data are compared and the index cannot be shifted by a prepended instruction (these APIs prove only that the account is the real sysvar)
 - Two-step authority transfer (propose, then accept by the new authority's signature)
 - Consistent protocol-favoring rounding unless compounding or zero-rounding — **but confirm the rounding really happens**: `f64` is not exact (`(x as f64 * 10f64.powi(k)).floor()` rounds to the nearest representable value once the product passes 2^53, so a "round down" can round up; `.ceil()` on an already-rounded float can land one unit low), an integer `a / b * c` floors before it scales, and a "round up" written as `(a + b - 1) / b` overflows on large `a` when overflow checks are off
 

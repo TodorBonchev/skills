@@ -31,7 +31,7 @@ You are here for the bugs that REQUIRE two or three of these lenses to see at on
 - A rate updated mid-epoch instead of at the epoch boundary — later readers in the same epoch see a different compounded value than earlier readers. Seam: precision × invariant (epoch boundary).
 - An order or strategy accepted now and executed later by a crank — execution uses current values while acceptance assumed the old ones; the collateral check passes at submit and fails at execute. Seam: invariant × execution.
 
-**Float seam (new in v1.3).** Any `f64` / `f32` on a value path is a precision × boundary seam by itself: above 2^53 an `f64` cannot hold every integer, so `floor` / `trunc` / `ceil` of `x * 10^k` become round-to-nearest and the rounding direction the code relies on flips. Find the input size where it flips (amount × scale > 2^53), then the invariant it breaks (shares over-minted, a peg or solvency check passed by one unit). Tie every tolerance in an invariant check to who can trigger the rounding that consumes it — a tolerance an unprivileged caller can consume once per call is a drain, not a safety margin.
+**Float seam.** Any `f64` / `f32` on a value path is a precision × boundary seam by itself: above 2^53 an `f64` cannot hold every integer, so `floor` / `trunc` / `ceil` of `x * 10^k` become round-to-nearest and the rounding direction the code relies on flips. Find the input size where it flips (amount × scale > 2^53) and **compute** the direction on concrete inputs on both sides of the edge (math-precision's worked-example rule — the same expression rounds up for one amount and down for the next), then the invariant it breaks (shares over-minted, a peg or solvency check passed by one unit). Tie every tolerance in an invariant check to who can trigger the rounding that consumes it — a tolerance an unprivileged caller can consume once per call is a drain, not a safety margin.
 
 ## Discipline
 
@@ -51,6 +51,7 @@ proof: concrete numbers showing the seam — the trigger input, the intermediate
 
 Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
 
-- **P4** oracle manipulation feeding a value calc (Mango). **P5** pricing-curve manipulation (Nirvana). **P8** rounding net-positive (SPL token-lending). - **B10** overflow / cast truncation. **B11** stale post-CPI read of `amount`/`supply`.
-- **New (v1.2):** **B16** a payout computed from live state with no `min_out` bound. **L5** silent u64 overflow on a large withdrawal. **L9** precision loss across a multiplier that decides solvency.
-- **New (v1.3):** the float seam (`f64` past 2^53). **B17** a same-asset round trip whose second leg reads a balance the first leg moved.
+- **P4** oracle manipulation feeding a value calc (Mango). **P5** pricing-curve manipulation (Nirvana). **P8** rounding net-positive (SPL token-lending).
+- **B10** overflow / cast truncation. **B11** stale post-CPI read of `amount`/`supply`. **B16** a payout computed from live state with no `min_out` bound. **B17** a same-asset round trip whose second leg reads a balance the first leg moved.
+- **L5** silent u64 overflow on a large withdrawal. **L6** a withdraw paid from live state with no minimum output. **L9** precision loss across a multiplier that decides solvency.
+- The float seam (`f64` past 2^53).

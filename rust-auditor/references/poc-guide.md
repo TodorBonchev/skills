@@ -129,7 +129,7 @@ command -v rustup   # cargo-build-sbf shells out to rustup; without it the SBF b
   install hint; let the developer decide.
 - If `anchor` is absent but `cargo-build-sbf` is present, fall back to `cargo build-sbf` for
   Anchor programs (you lose the IDL, but LiteSVM only needs the `.so` and the instruction
-  discriminator, which is `sha256("global:<ix>")[..8]`).
+  discriminator — the default is `sha256("global:<ix>")[..8]`, see below).
 - If `rustup` is absent, `cargo-build-sbf` fails with "Failed to execute rustup"; put
   `~/.cargo/bin` on `PATH` or report `UNVERIFIED` with that reason.
 - **Missing crates** (`litesvm`, `mollusk-svm`, `solana-*`) are ordinary `cargo` dependencies of
@@ -140,10 +140,12 @@ command -v rustup   # cargo-build-sbf shells out to rustup; without it the SBF b
 
 ## Anchor discriminators without the IDL
 
-A LiteSVM test calls an instruction by raw bytes. The 8-byte discriminator is
+A LiteSVM test calls an instruction by raw bytes. The default 8-byte discriminator is
 `sha256("global:<snake_case_ix_name>")[..8]`; an account discriminator is
 `sha256("account:<StructName>")[..8]`. Compute them in the test with `sha2` so the PoC does not
-need the IDL.
+need the IDL. From Anchor 0.31 both can be overridden (`#[account(discriminator = ...)]`,
+`#[instruction(discriminator = ...)]`) with any length: grep for `discriminator =` first and use
+the literal bytes (or the IDL, when it was built) wherever an override exists.
 
 ## What a PoC must and must not claim
 
