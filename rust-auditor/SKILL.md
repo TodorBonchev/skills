@@ -34,7 +34,7 @@ You are the orchestrator of a parallelized security audit of Rust programs that 
     d=$(dirname "$f")
     while [ ! -f "$d/Cargo.toml" ] && [ "$d" != "." ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
     [ -f "$d/Cargo.toml" ] || continue
-    deps=$(awk '{ sub(/[[:space:]]*#.*/, "") } /^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/ && s !~ /cfg\(not\(/' "$d/Cargo.toml")
+    deps=$(awk '{ sub(/[[:space:]]*#.*/, "") } /^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/ && s !~ /cfg\(not\([^]]*target_(os|arch)[[:space:]]*=[[:space:]]*\\?"(solana|bpf|sbf)/' "$d/Cargo.toml")
     printf '%s\n' "$deps" | grep -qE '(^[[:space:]]*|dependencies\.)"?(anchor-lang|anchor-spl|solana-program|solana-program-entrypoint|solana-account-info|pinocchio[a-z0-9-]*|steel)"?[[:space:]]*[]=.]' || continue
     printf '%s\n' "$deps" | grep -qE '(^[[:space:]]*|dependencies\.)"?(solana-client|solana-rpc-client[a-z0-9-]*|anchor-client|clap|tokio|reqwest)"?[[:space:]]*[]=.]' && continue
     echo "$f"
@@ -44,7 +44,7 @@ You are the orchestrator of a parallelized security audit of Rust programs that 
   Do not re-derive this command — paste it. Three parts of it are **required, not tidiness**:
 
   - `-type f` — `cat` on a directory breaks the source build, and a `find` without it matches any directory whose name ends in `.rs`.
-  - The `[dependencies]`-only `awk` — a program crate routinely lists `solana-program-test`, `litesvm`, `tokio` or `solana-client` under `[dev-dependencies]` for its tests, or under a host-only `[target.'cfg(not(target_os = "solana"))'.dependencies]` table. Reading the whole manifest would classify every tested program as a client and scan nothing. The `awk` drops `#` comments and host-only (`cfg(not(...))`) target tables, and the greps match a crate name only in key position (`name =`, `name.workspace`, `[dependencies.name]`), never inside a `features = [...]` list.
+  - The `[dependencies]`-only `awk` — a program crate routinely lists `solana-program-test`, `litesvm`, `tokio` or `solana-client` under `[dev-dependencies]` for its tests, or under a host-only `[target.'cfg(not(target_os = "solana"))'.dependencies]` table. Reading the whole manifest would classify every tested program as a client and scan nothing. The `awk` drops `#` comments and host-only target tables (`cfg(not(target_os = "solana"))`, also `target_arch = "bpf"`/`"sbf"`; any other `cfg(not(...))` table, such as `cfg(not(feature = "no-entrypoint"))`, is still read), and the greps match a crate name only in key position (`name =`, `name.workspace`, `[dependencies.name]`), never inside a `features = [...]` list.
   - The walk up to the nearest `Cargo.toml` — a program's instruction handlers live in `src/instructions/*.rs`, several directories below the manifest that says what the crate is.
 
   **If the command prints nothing**, the repository has `.rs` files but no crate that depends on a Solana program framework. Print `no crate depends on anchor-lang, solana-program or pinocchio — scanning every non-test .rs file`, and re-run the `find` **without** the `| sort | while … done` filter. Do not stop: a program can reach the runtime through a framework this list does not know.
@@ -301,7 +301,7 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
    for f in {file list}; do d=$(dirname "$f"); while [ ! -f "$d/Cargo.toml" ] && [ "$d" != "." ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done; [ -f "$d/Cargo.toml" ] && printf '%s\n' "$d/Cargo.toml"; done | sort -u > $B/manifests.txt
    for m in ./Cargo.toml ./Anchor.toml; do [ -f "$m" ] && ! grep -qxF "$m" $B/manifests.txt && printf '%s\n' "$m" >> $B/manifests.txt; done
    fw=$(grep 'Cargo.toml$' $B/manifests.txt | while IFS= read -r m; do
-     deps=$(awk '{ sub(/[[:space:]]*#.*/, "") } /^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/ && s !~ /cfg\(not\(/' "$m")
+     deps=$(awk '{ sub(/[[:space:]]*#.*/, "") } /^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/ && s !~ /cfg\(not\([^]]*target_(os|arch)[[:space:]]*=[[:space:]]*\\?"(solana|bpf|sbf)/' "$m")
      has() { printf '%s\n' "$deps" | grep -qE "(^[[:space:]]*|dependencies\\.)\"?($1)\"?[[:space:]]*[]=.]"; }
      if has 'anchor-lang|anchor-spl'; then echo Anchor; elif has 'pinocchio[a-z0-9-]*'; then echo Pinocchio
      elif has 'steel'; then echo Steel; elif has 'solana-program|solana-program-entrypoint|solana-account-info'; then echo 'native solana-program'; fi

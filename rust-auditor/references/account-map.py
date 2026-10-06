@@ -667,8 +667,10 @@ def analyse_body(bodies, fields, native_names=()):
         # ---- writes through a borrowed data view or a typed mutable loader. A view
         # bound from ANY borrow (`borrow_unchecked()` included — Pinocchio code casts
         # it to `*mut u8`) is a state change once something writes into it:
-        # `v[..] = x`, `v.copy_from_slice(..)`, `copy_nonoverlapping(src, v.as_ptr() ..)`,
-        # `x.serialize(&mut *v)`, `from_bytes_mut(&mut v ..)`.
+        # `v[..] = x`, `v.copy_from_slice(..)`, `x.serialize(&mut *v)`,
+        # `from_bytes_mut(&mut v ..)`, or a pointer copy whose DESTINATION is the view
+        # (`copy_nonoverlapping(src, v.as_ptr() as *mut u8, n)`, also through a
+        # `let p = v.as_mut_ptr()` alias). Copying OUT of a view is a read.
         views = {}
         for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*(?:unsafe\s*\{\s*)?&?\s*(?:mut\s+)?(?:ctx\.accounts\.|self\.)?(\w+)\s*(?:\.\s*to_account_info\s*\(\s*\))?\s*\.\s*" + VIEW_BORROW + r"\s*\(\s*\)", m):
             acct = aliases.get(mt.group(2), mt.group(2))
@@ -678,7 +680,6 @@ def analyse_body(bodies, fields, native_names=()):
             v = re.escape(var)
             wpats = [r"\b%s\s*\[[^\]]*\]\s*(?:[+\-*/%%|&^]|<<|>>)?=(?!=)" % v,
                      r"\b%s\s*(?:\[[^\]]*\]\s*)?\.\s*(?:copy_from_slice|clone_from_slice|fill|swap_with_slice|copy_within)\s*\(" % v,
-                     r"\b(?:copy_nonoverlapping|copy|write_bytes|write|write_unaligned|write_volatile)\s*\((?:[^;()]|\([^;()]*\))*?\b%s\s*\.\s*as_(?:mut_)?ptr\b" % v,
                      r"\b(?:serialize|pack|pack_into_slice|try_serialize|write_all)\s*\([^;]*&\s*mut\s+(?:\*\s*|&\s*mut\s+)?%s\b" % v,
                      r"\b(?:from_bytes_mut|try_from_bytes_mut|cast_slice_mut|from_mut|load_mut)\s*(?:::\s*<[^>]*>\s*)?\(\s*&\s*mut\s+%s\b" % v]
             wm = None
@@ -686,6 +687,16 @@ def analyse_body(bodies, fields, native_names=()):
                 wm = re.search(wp, m[at:])
                 if wm:
                     break
+            if not wm:
+                ptrs = [v] + [re.escape(pm.group(1)) for pm in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*(?:unsafe\s*\{\s*)?%s\s*\.\s*(?:as_mut_ptr\s*\(\s*\)|as_ptr\s*\(\s*\)\s*as\s*\*\s*mut\b)" % v, m[at:])]
+                into_view = r"^\W*(?:%s\s*\.\s*(?:as_mut_ptr\b|as_ptr\s*\(\s*\)\s*as\s*\*\s*mut\b)|(?:%s)\b)" % (v, "|".join(ptrs[1:]) or r"(?!x)x")
+                for cm in re.finditer(r"\b(copy_nonoverlapping|copy|write_bytes|write|write_unaligned|write_volatile)\s*(?:::\s*<[^>]*>\s*)?\(", m[at:]):
+                    o = at + cm.end() - 1
+                    args = split_top(m[o + 1:match_close(m, o)])
+                    dst = args[1] if cm.group(1) in ("copy_nonoverlapping", "copy") and len(args) > 1 else args[0] if args else ""
+                    if re.search(into_view, dst):
+                        wm = cm
+                        break
             if wm:
                 res["rawwrite"].append((acct, b.loc(at + wm.start())))
                 w = "raw data of " + acct
@@ -1066,39 +1077,94 @@ def in_code_checks(inst, fields):
     return out
 
 
-EXIT_NAME = re.compile(r"withdraw|redeem|unwrap|unstake|claim|close|exit|repay|liquidat|settle|refund|cancel|unlock|release|remove_liquidity|burn", re.I)
+EXIT_NAME = re.compile(r"^(?:withdraw|redeem|unwrap|unstake|claim|close|exit|repay|liquidat\w*|settle|refund|cancel|unlock|release|remove_liquidity|burn)(?:_|$)", re.I)
 LOCAL_ROOTS = {"crate", "self", "super", "std", "core", "anchor_lang", "anchor_spl", "solana_program", "solana_sdk", "pinocchio",
                "spl_token", "spl_token_2022", "spl_token_interface", "spl_associated_token_account", "mpl_token_metadata"}
 LOCAL_IDS = re.compile(r"^(?:crate\s*::\s*)?(?:ID|id\s*\(\s*\)|program_id|__private::\w+)$|token|system_program|associated", re.I)
 
 
+_DEPS = {}
+
+
+def crate_deps(path):
+    """Dependency crate names (`-` -> `_`) from the nearest Cargo.toml, or None."""
+    d = os.path.dirname(os.path.abspath(path))
+    while True:
+        m = os.path.join(d, "Cargo.toml")
+        if os.path.isfile(m):
+            if m not in _DEPS:
+                names, sec = set(), ""
+                try:
+                    for line in open(m, encoding="utf-8", errors="replace"):
+                        line = line.split("#", 1)[0].strip()
+                        hm = re.match(r"^\[(.*)\]$", line)
+                        if hm:
+                            sec = hm.group(1).strip()
+                            dm = re.match(r"^(?:target\..*\.)?(?:dev-|build-)?dependencies\.([\w-]+)$", sec)
+                            if dm:
+                                names.add(dm.group(1).replace("-", "_"))
+                            continue
+                        if re.match(r"^(?:target\..*\.)?(?:dev-|build-)?dependencies$", sec):
+                            km = re.match(r'^"?([\w-]+)"?\s*(?:=|\.)', line)
+                            if km:
+                                names.add(km.group(1).replace("-", "_"))
+                                pm = re.search(r'package\s*=\s*"([\w-]+)"', line)
+                                if pm:
+                                    names.add(pm.group(1).replace("-", "_"))
+                except OSError:
+                    pass
+                _DEPS[m] = names
+            return _DEPS[m]
+        nd = os.path.dirname(d)
+        if nd == d:
+            return None
+        d = nd
+
+
 def foreign_owner(f, src):
     """The crate (or program-ID expression) that owns an account field, when it
-    is plainly another program: `Account<'info, other::T>`, a type imported with
-    `use other::...::T`, or `owner = other::ID`. A `seeds::program` PDA is
-    usually passed straight through to that program's CPI and is not raised.
-    Token/Mint types and the program's own crate are never foreign."""
-    for key in ("owner",):
-        for v in f.val(key):
-            v = re.sub(r"\s+", "", v)
-            if v and not LOCAL_IDS.search(v):
-                return v
-    if f.kind not in ("Account", "AccountLoader", "LazyAccount"):
+    is plainly another program: `Account<'info, other::T>` / `InterfaceAccount`,
+    a type imported with `use other::...::T` (or a single `use other::...::*`),
+    `owner = other::ID`, or `constraint = x.owner == other::ID`. A path root
+    counts as another crate only when the nearest Cargo.toml lists it as a
+    dependency (without a manifest: when no `mod root` is declared in the file).
+    A `seeds::program` PDA is usually passed straight through to that program's
+    CPI and is not raised. Token/Mint types and the program's own crate are
+    never foreign."""
+    if f.val("seeds::program"):
+        return ""
+    for v in f.val("owner"):
+        v = re.sub(r"\s+", "", v)
+        if v and not LOCAL_IDS.search(v):
+            return v
+    for v in f.val("constraint"):
+        # a program ID only (`other::ID`, `other::id()`, `OTHER_PROGRAM_ID`) — a token
+        # account's `.owner == user.key()` is a wallet check, not a foreign owner
+        cm = re.search(r"\.\s*owner\s*(?:\(\s*\))?\s*==\s*&?\s*\*?\s*((?:\w+\s*::\s*)+(?:ID|id\s*\(\s*\))|[A-Z][A-Z0-9_]*PROGRAM_ID)\b", v)
+        if cm and not LOCAL_IDS.search(re.sub(r"\s+", "", cm.group(1))):
+            return re.sub(r"\s+", "", cm.group(1))
+    if f.kind not in ("Account", "AccountLoader", "LazyAccount", "InterfaceAccount"):
         return ""
     inner = re.sub(r"\s+", "", f.inner)
     name = inner.split("::")[-1]
     if re.search(r"(TokenAccount|Mint)$", name):
         return ""
+    deps = crate_deps(src.path)
     if "::" in inner:
         root = inner.split("::")[0]
     else:
         mt = re.search(r"\buse\s+(?:::)?(\w+)\s*::[^;]*\b%s\b[^;]*;" % re.escape(name), src.m)
         root = mt.group(1) if mt else ""
+        if not root:
+            globs = {g.group(1) for g in re.finditer(r"\buse\s+(?:::)?(\w+)\s*::[\w:\s]*::\s*\*\s*;", src.m)}
+            globs = {g for g in globs if g not in LOCAL_ROOTS and (deps is None or g in deps)}
+            root = globs.pop() if len(globs) == 1 else ""
     own = (getattr(src, "crate", "") or "").replace("-", "_")
     if not root or root in LOCAL_ROOTS or root == own:
         return ""
-    return root
-
+    if deps is not None:
+        return root if root in deps else ""
+    return "" if re.search(r"\bmod\s+%s\b" % re.escape(root), src.m) else root
 
 def anchor_flags(inst, st, res):
     fl = []
@@ -1156,7 +1222,7 @@ def anchor_flags(inst, st, res):
                 continue
             who = foreign_owner(f, st["src"])
             if who:
-                fl.append((key, "foreign-dependency", "exit path requires `%s` (%s), an account owned by another program (`%s`) — if that program or its admin closes, migrates or re-keys it, this instruction fails for every caller (Anchor: AccountNotInitialized / AccountOwnedByWrongProgram); check for a fallback, and whether that party can also decide who may exit" % (f.name, f.type_desc(), squash(who, 40)), inst))
+                fl.append((key, "foreign-dependency", "exit path requires `%s` (%s), an account owned by another program (`%s`) — if that program or its admin closes, migrates or re-keys it, this instruction fails for every caller (Anchor: the account no longer loads); check for a fallback, and whether that party can also decide who may exit" % (f.name, f.type_desc(), squash(who, 40)), inst))
     muts = {}
     for f in fields.values():
         written = any(w == f.name or w.startswith(f.name + ".") or w.endswith(" " + f.name) for w in res["writes"])

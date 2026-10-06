@@ -144,7 +144,7 @@ A LiteSVM test calls an instruction by raw bytes. The default 8-byte discriminat
 `sha256("global:<snake_case_ix_name>")[..8]`; an account discriminator is
 `sha256("account:<StructName>")[..8]`. Compute them in the test with `sha2` so the PoC does not
 need the IDL. From Anchor 0.31 both can be overridden (`#[account(discriminator = ...)]`,
-`#[instruction(discriminator = ...)]`) with any length: grep for `discriminator =` first and use
+`#[instruction(discriminator = ...)]`) with any non-empty length that is not all zeros: grep for `discriminator =` first and use
 the literal bytes (or the IDL, when it was built) wherever an override exists.
 
 ## What a PoC must and must not claim
