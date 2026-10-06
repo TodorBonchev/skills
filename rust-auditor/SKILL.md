@@ -307,12 +307,28 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
      elif has 'steel'; then echo Steel; elif has 'solana-program|solana-program-entrypoint|solana-account-info'; then echo 'native solana-program'; fi
    done | sort -u | paste -sd '+' - | sed 's/+/ + /g')
    [ -n "$fw" ] || fw="unknown — no in-scope crate depends on anchor-lang, pinocchio or solana-program"
-   root=$(grep 'Cargo.toml$' $B/manifests.txt | while IFS= read -r m; do grep -q '^[[:space:]]*\[workspace\]' "$m" && echo "$m"; done | head -1)
-   [ -n "$root" ] || root=$(grep 'Cargo.toml$' $B/manifests.txt | head -1)
-   oc=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[profile\.release\]/ && /^[[:space:]]*overflow-checks[[:space:]]*=/ { v=$0; sub(/.*=[[:space:]]*/, "", v); sub(/[[:space:]#].*/, "", v) } END { print v }' "$root" 2>/dev/null)
-   case "$oc" in true) oc="on — \`[profile.release] overflow-checks = true\` in $root, so integer overflow panics" ;;
-     false) oc="OFF — \`[profile.release] overflow-checks = false\` in $root, so release builds wrap on integer overflow" ;;
-     *) oc="not set in $root — release builds (cargo build-sbf, anchor build) wrap on integer overflow" ;; esac
+   ws_root() { c=$(dirname "$1"); d=$c
+     while :; do
+       if [ -f "$d/Cargo.toml" ] && grep -q '^[[:space:]]*\[workspace\][[:space:]]*$' "$d/Cargo.toml"; then
+         rel=${c#"$d"}; rel=${rel#/}
+         ex=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[workspace\][[:space:]]*$/' "$d/Cargo.toml" | tr -d ' \t\r\n' | grep -oE 'exclude=\[[^]]*\]' | grep -oE '"[^"]*"' | tr -d '"')
+         for x in $ex; do x=${x#./}; x=${x%/}; case "$rel/" in "$x"/*) [ -n "$rel" ] && { echo "$1"; return; } ;; esac; done
+         echo "$d/Cargo.toml"; return
+       fi
+       { [ "$d" = "." ] || [ "$d" = "/" ]; } && break; d=$(dirname "$d")
+     done; echo "$1"; }
+   grep 'Cargo.toml$' $B/manifests.txt | while IFS= read -r m; do grep -q '^[[:space:]]*\[package\]' "$m" && printf '%s\t%s\n' "$(ws_root "$m")" "$(basename "$(dirname "$m")")"; done | sort -u > $B/roots.txt
+   cut -f1 $B/roots.txt | sort -u | while IFS= read -r r; do grep -qxF "$r" $B/manifests.txt || printf '%s\n' "$r" >> $B/manifests.txt; done
+   [ -s $B/roots.txt ] || printf '%s\t%s\n' "$(grep 'Cargo.toml$' $B/manifests.txt | head -1)" all > $B/roots.txt
+   nroots=$(cut -f1 $B/roots.txt | sort -u | wc -l)
+   oc=$(cut -f1 $B/roots.txt | sort -u | while IFS= read -r root; do
+     v=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[profile\.release\]/ && /^[[:space:]]*overflow-checks[[:space:]]*=/ { v=$0; sub(/.*=[[:space:]]*/, "", v); sub(/[[:space:]#].*/, "", v) } END { print v }' "$root" 2>/dev/null)
+     w=""; [ "$nroots" -gt 1 ] && w=" (workspace of: $(awk -F'\t' -v r="$root" '$1==r { print $2 }' $B/roots.txt | paste -sd ',' - | sed 's/,/, /g'))"
+     case "$v" in true) echo "on — \`[profile.release] overflow-checks = true\` in $root$w, so integer overflow panics" ;;
+       false) echo "OFF — \`[profile.release] overflow-checks = false\` in $root$w, so release builds wrap on integer overflow" ;;
+       *) echo "not set in $root$w — release builds (cargo build-sbf, anchor build) wrap on integer overflow" ;; esac
+   done | paste -sd ';' - | sed 's/;/; /g')
+   [ "$nroots" -gt 1 ] && oc="differs per workspace — $oc"
    {
      printf '# Build context\n\n- Framework: %s\n- Release overflow checks: %s\n- Manifests: every Cargo.toml / Anchor.toml below, verbatim\n\n' "$fw" "$oc"
      while IFS= read -r m; do printf '### %s\n\n```toml\n' "$m"; cat "$m"; printf '\n```\n\n'; done < $B/manifests.txt
@@ -322,7 +338,7 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
    printf 'Framework: %s\nRelease overflow checks: %s\n' "$fw" "$oc"
    ```
 
-   **This is how the framework reaches the agents.** The **Build context** header sits at the top of `source.md`, so every one of the twelve bundles opens with it: which framework each crate uses (Anchor, native `solana-program`, Pinocchio — a repo can mix them), the exact framework versions in the manifests, and whether the **workspace-root** release profile turns overflow checks on. Cargo ignores `[profile.*]` in member crates, so only the root manifest decides; `cargo build-sbf` builds with the release profile, and the release default is **off** — integer overflow wraps in the deployed program. That one line changes how every arithmetic finding is scored, which is why it is computed by shell and not left for twelve agents to infer.
+   **This is how the framework reaches the agents.** The **Build context** header sits at the top of `source.md`, so every one of the twelve bundles opens with it: which framework each crate uses (Anchor, native `solana-program`, Pinocchio — a repo can mix them), the exact framework versions in the manifests, and whether the release profile of **each crate's workspace root** turns overflow checks on. Cargo ignores `[profile.*]` in member crates, so the root manifest decides — but a repo can hold **more than one workspace**: a nested `[workspace]` (e.g. `programs/amm/Cargo.toml`) or a crate listed in the root's `exclude` is built under its own root, not the top-level one. `ws_root` walks up from each in-scope crate to the first `[workspace]` manifest; if that workspace's `exclude` covers the crate (or none exists), the crate's own manifest is its root. Every root is added to `manifests.txt`, and when the roots disagree the line starts `differs per workspace —` and names the crates under each root, so an agent scores a crate by **its** workspace, not the repo's top level. `cargo build-sbf` builds with the release profile, and the release default is **off** — integer overflow wraps in the deployed program. That one line changes how every arithmetic finding is scored, which is why it is computed by shell and not left for twelve agents to infer. (Member-glob coverage — a crate under a `[workspace]` directory but not matched by `members` — is not checked; Cargo refuses to build such a crate, so it is not deployed code.)
 
    The two `printf` lines it prints are the only output this step adds. Print them with the line counts below; they are not part of the report.
 
@@ -332,7 +348,7 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
 python3 {resolved_path}/account-map.py --out .rust-auditor/runs/{stamp}/account-map.md {file list}
 ```
 
-The script is Python standard library + `rg` only; it never installs anything and writes only the `--out` file. It lists every instruction handler with its accounts (signer / mut / owner / type / PDA seeds and bump source / init / close / constraints), its cross-program calls (the target program and how its ID is validated, plus signer seeds), the state it writes and how it is gated, and opens with an auto-highlighted **Review leads** section — authority-bearing accounts written with no signer check, `UncheckedAccount` with no valid `/// CHECK`, PDA seeds lacking a user key, CPI to a non-constant program ID, unvalidated `remaining_accounts`. It parses **Anchor** structurally; for **native `solana-program` and Pinocchio** it fills what it can and lists the rest under a **Needs completion** section.
+The script is Python standard library + `rg` only; it never installs anything and writes only the `--out` file. It lists every instruction handler with its accounts (signer / mut / owner / type / PDA seeds and bump source / init / close / constraints), its cross-program calls (the target program and how its ID is validated, plus signer seeds), the state it writes and how it is gated, and opens with an auto-highlighted **Review leads** section — authority-bearing accounts written with no signer check, keys compared against stored data with no `is_signer` (`key-compared-no-signer`), `UncheckedAccount` with no valid `/// CHECK`, PDA seeds lacking a user key, caller-chosen bumps, hand-coded byte offsets that miss the `#[repr(C)]` struct layout (`offset-mismatch`), CPI to a non-constant program ID, unvalidated `remaining_accounts`. Global singletons are folded so they do not bury the per-user leads: a constant-seed PDA is one `singleton-init` lead on the instruction that creates it (or one `singleton-write` when nothing in scope creates it), constant CPI signer seeds are one `global-signer` lead per program, and a child PDA keyed only by a validated parent, or a PDA owned by another program, raises nothing. It parses **Anchor** structurally; for **native `solana-program` and Pinocchio** it fills what it can and lists the rest under a **Needs completion** section.
 
 > **The map is leads, never findings.** Every line is a place to look produced by pattern matching; an agent confirms each one in the source and reports nothing on the map's word alone. The script cannot see logic bugs, so an empty Review-leads section is not a clean bill.
 
