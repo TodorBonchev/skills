@@ -423,6 +423,7 @@ INVOKE = re.compile(r"\b(invoke_signed_unchecked|invoke_signed|invoke_unchecked|
 CPICTX = re.compile(r"\bCpiContext\s*::\s*(new_with_signer|new)\s*\(")
 WITH_SIGNER = re.compile(r"\.\s*with_signer\s*\(")
 PINO_CPI = re.compile(r"\}\s*\.\s*(invoke_signed|invoke)\s*\(")
+VIEW_BORROW = r"(?:try_borrow_mut_data|try_borrow_data|try_borrow_mut|try_borrow|borrow_mut_data_unchecked|borrow_data_unchecked|borrow_mut_unchecked|borrow_unchecked_mut|borrow_unchecked|data\s*\.\s*borrow_mut|data\s*\.\s*borrow)"
 GATE = re.compile(r"\b(require(?:_keys)?(?:_eq|_neq|_gt|_gte)?|assert(?:_eq|_ne)?)\s*!\s*\(")
 IF_ERR = re.compile(r"\bif\s+([^{};]{3,200}?)\s*\{\s*(?:msg!\([^;]*\);\s*)*return\s+Err")
 
@@ -545,6 +546,16 @@ def analyse_body(bodies, fields, native_names=()):
             aliases[mt.group(1)] = mt.group(2)
         for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*&\s*(?:mut\s+)?(?:ctx\.accounts\.|self\.)(\w+)\s*;", b.m):
             aliases.setdefault(mt.group(1), mt.group(2))
+    # typed mutable loaders (`let cfg = Config::load_mut(acct)?`, `from_bytes_mut(&mut data)`)
+    # make `cfg.field = x` a write to the account
+    for b in bodies:
+        vw = {}
+        for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*(?:unsafe\s*\{\s*)?&?\s*(?:mut\s+)?(?:ctx\.accounts\.|self\.)?(\w+)\s*(?:\.\s*to_account_info\s*\(\s*\))?\s*\.\s*" + VIEW_BORROW + r"\s*\(\s*\)", b.m):
+            vw[mt.group(1)] = mt.group(2)
+        for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*(?:unsafe\s*\{\s*)?(?:[\w:]+\s*::\s*)?(?:load_mut|load_mut_unchecked|from_account_info_mut|from_account_view_mut|from_account_info_mut_unchecked|from_bytes_mut|try_from_bytes_mut)\s*(?:::\s*<[^>]*>\s*)?\(\s*&?\s*(?:mut\s+)?(?:ctx\.accounts\.|self\.)?(\w+)\b", b.m):
+            src = mt.group(2) if mt.group(2) in names else vw.get(mt.group(2))
+            if src in names:
+                aliases.setdefault(mt.group(1), aliases.get(src, src))
     res["any_is_signer"] = bool(re.search(r"\bis_signer\b", allm))
     res["init_checks"] = bool(re.search(r"is_initialized|initialized\b|DISCRIMINATOR|discriminator|AccountAlreadyInitialized|lamports\(\)\s*[!=]=\s*0|data_is_empty|data_len\(\)\s*[!=]=\s*0|create_account|CreateAccount\b|allocate\s*\(", allm))
     seen_w = set()
@@ -640,10 +651,37 @@ def analyse_body(bodies, fields, native_names=()):
                     seen_w.add(w); res["writes"].append(w)
                 if mt.group(2) in ("sub_lamports", "set_lamports"):
                     res["lamports"].append((acct, mt.group(2), "", b.loc(mt.start())))
-        for mt in re.finditer(r"(?:ctx\.accounts\.|self\.)?\b(\w+)\s*(?:\.\s*to_account_info\s*\(\s*\))?\s*\.\s*(?:try_borrow_mut_data|data\s*\.\s*borrow_mut|try_borrow_mut|borrow_mut_data_unchecked)\s*\(", m):
+        for mt in re.finditer(r"(?:ctx\.accounts\.|self\.)?\b(\w+)\s*(?:\.\s*to_account_info\s*\(\s*\))?\s*\.\s*(?:try_borrow_mut_data|data\s*\.\s*borrow_mut|try_borrow_mut|borrow_mut_data_unchecked|borrow_mut_unchecked|borrow_unchecked_mut)\s*\(", m):
             acct = aliases.get(mt.group(1), mt.group(1))
             if acct in names:
                 res["rawwrite"].append((acct, b.loc(mt.start())))
+                w = "raw data of " + acct
+                if w not in seen_w:
+                    seen_w.add(w); res["writes"].append(w)
+        # ---- writes through a borrowed data view or a typed mutable loader. A view
+        # bound from ANY borrow (`borrow_unchecked()` included — Pinocchio code casts
+        # it to `*mut u8`) is a state change once something writes into it:
+        # `v[..] = x`, `v.copy_from_slice(..)`, `copy_nonoverlapping(src, v.as_ptr() ..)`,
+        # `x.serialize(&mut *v)`, `from_bytes_mut(&mut v ..)`.
+        views = {}
+        for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*(?:unsafe\s*\{\s*)?&?\s*(?:mut\s+)?(?:ctx\.accounts\.|self\.)?(\w+)\s*(?:\.\s*to_account_info\s*\(\s*\))?\s*\.\s*" + VIEW_BORROW + r"\s*\(\s*\)", m):
+            acct = aliases.get(mt.group(2), mt.group(2))
+            if acct in names:
+                views[mt.group(1)] = (acct, mt.end())
+        for var, (acct, at) in views.items():
+            v = re.escape(var)
+            wpats = [r"\b%s\s*\[[^\]]*\]\s*(?:[+\-*/%%|&^]|<<|>>)?=(?!=)" % v,
+                     r"\b%s\s*(?:\[[^\]]*\]\s*)?\.\s*(?:copy_from_slice|clone_from_slice|fill|swap_with_slice|copy_within)\s*\(" % v,
+                     r"\b(?:copy_nonoverlapping|copy|write_bytes|write|write_unaligned|write_volatile)\s*\((?:[^;()]|\([^;()]*\))*?\b%s\s*\.\s*as_(?:mut_)?ptr\b" % v,
+                     r"\b(?:serialize|pack|pack_into_slice|try_serialize|write_all)\s*\([^;]*&\s*mut\s+(?:\*\s*|&\s*mut\s+)?%s\b" % v,
+                     r"\b(?:from_bytes_mut|try_from_bytes_mut|cast_slice_mut|from_mut|load_mut)\s*(?:::\s*<[^>]*>\s*)?\(\s*&\s*mut\s+%s\b" % v]
+            wm = None
+            for wp in wpats:
+                wm = re.search(wp, m[at:])
+                if wm:
+                    break
+            if wm:
+                res["rawwrite"].append((acct, b.loc(at + wm.start())))
                 w = "raw data of " + acct
                 if w not in seen_w:
                     seen_w.add(w); res["writes"].append(w)
