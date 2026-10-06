@@ -78,3 +78,9 @@ assumption: what the code assumes about that boundary
 actual: what happens with the account or input you pass
 proof: the concrete account list and data you send, and the resulting state delta
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P1** sysvar substitution. **P2** unvalidated root-of-trust account. **P3** fake account on a weak owner check. **P7** authority read from a caller-supplied account. - **B1** missing signer. **B2** missing owner. **B3** type cosplay. **B4** reinit / init front-running. - **B5** arbitrary CPI. **B6** duplicate mutable accounts. **B7** bump / PDA canonicalization. **B8** close / revival. **B9** sysvar address.

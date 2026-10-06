@@ -23,3 +23,9 @@ For every helper fn and every `impl` method in target modules:
 - **Truncate encoded keys.** Encoders that pack a 32-byte `Pubkey`, an EVM address from a bridge message, or a variable-length seed into a narrower field silently truncate; refunds and callbacks route to the truncated value. Trace every encoder/decoder for length mismatches.
 - **Manipulate single-block oracles.** Wrappers that read a pool's reserves, a CLMM's current price or a single feed in the same transaction as a deposit or liquidation accept attacker-set values; the wrapper appears to validate but the validation is itself single-block.
 - **Trust divergence-check dead code.** A "safety check" that compares two values with an unreachable threshold, or a staleness bound larger than any realistic age, is dead code masquerading as protection.
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **B2** missing owner check on a manually deserialized account. - **B3** account-data matching / type cosplay (no discriminator). - **B9** sysvar address checking. - **P1** sysvar substitution through a raw decode (Wormhole).

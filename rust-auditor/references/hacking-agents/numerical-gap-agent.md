@@ -44,3 +44,9 @@ Add to FINDINGs:
 seam: which two or three lenses combine (precision×invariant / boundary×precision / boundary×invariant / three-way)
 proof: concrete numbers showing the seam — the trigger input, the intermediate values, and the violated property
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P4** oracle manipulation feeding a value calc (Mango). **P5** pricing-curve manipulation (Nirvana). **P8** rounding net-positive (SPL token-lending). - **B10** overflow / cast truncation. **B11** stale post-CPI read of `amount`/`supply`.

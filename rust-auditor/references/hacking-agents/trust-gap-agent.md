@@ -40,3 +40,9 @@ seam: which two or three lenses combine (access×economics / economics×asymmetr
 actor: who can perform the exploit (role / user class / paired-instruction caller / permissionless cranker)
 proof: concrete trace showing the trust gap — authorization step, economic step, asymmetric outcome
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P2** root-of-trust gap (Cashio). **P6** over-powered admin (Raydium). **P7** insufficient admin check (Solend). **P10** governance capture (Synthetify). - **B7** PDA sharing / confused deputy across the access-economics seam.

@@ -34,3 +34,9 @@ input: which arguments and accounts you control and what values you supply
 assumption: the implicit assumption you violated
 proof: concrete trace from transaction to impact with specific values
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P1** sysvar account substitution (Wormhole). - **P9** arbitrary-program CPI (Loopscale). - **B5** arbitrary CPI / signer-privilege forwarding. **B11** stale account after CPI (missing `reload()`). - **B6** duplicate mutable accounts.

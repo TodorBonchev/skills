@@ -31,3 +31,9 @@ Add to FINDINGs:
 guard_gap: the guard that's missing — show the parallel instruction or account that has it
 proof: concrete transaction (signers, accounts, data) achieving unauthorized access
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P6** over-powered admin key drains via a parameter setter (Raydium) — reportable only with a concrete amplifier. - **P7** insufficient admin check via an attacker-owned account (Solend). - **P10** governance capture of an inactive DAO (Synthetify). - **B1** missing signer check. **B4** re-initialization / init front-running. **B7** PDA sharing / confused deputy.

@@ -86,3 +86,9 @@ pair_or_branch: which pair (deposit/withdraw, init/close, Token/Token-2022 branc
 asymmetry: the exact write/read/check that's in one side but missing or inverted in the other
 proof: side-by-side citation showing the asymmetry with concrete state values illustrating the break
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P9** one code path pins the CPI program, a sibling path does not (Loopscale). - **B8** asymmetric rounding between a to-shares and a from-shares path. - **B12** a Token vs Token-2022 branch that forgets fees/hooks on one side.

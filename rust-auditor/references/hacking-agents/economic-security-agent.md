@@ -41,3 +41,9 @@ Add to FINDINGs:
 ```
 proof: concrete numbers showing profitability or fund loss
 ```
+
+## Exploit patterns
+
+Your bundle carries `solana-exploit-patterns.md`. Read these entries first — they are the incidents and bug classes this agent owns — then skim the rest. A matching pattern is a lead, never a finding: confirm your own path through the source.
+
+- **P4** oracle manipulation of a thin market (Mango). - **P5** flash-loan pricing-curve manipulation (Nirvana). - **P9** arbitrary-program CPI through an unvalidated price integration (Loopscale). - **P3** fake account feeding a fee/price calc (Crema). - **B12** Token-2022 extension assumptions (transfer fees, hooks, permanent delegate).
