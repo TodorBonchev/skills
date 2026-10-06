@@ -154,6 +154,27 @@
         "[found-by-skill] T2 zero-ratio DoS on secure-amm deposit",
         "no finding of the module's documented bug"
       ]
+    },
+    {
+      "id": 7,
+      "name": "solana-program-escrow-pinocchio-token2022",
+      "prompt": "Run rust auditor on program/src in {TARGET_PROJECT_PATH} (solana-program/escrow @b27a635, comments stripped per evals/benchmarks.md section 0).",
+      "expected_output": "Findings matching the Accretion A26SFR3 report (evals/benchmarks.md section 9): withdraw does not bind the mint to the receipt (C1); hook CPI forwards the user signer (H2); mint close-and-recreate bypasses the allow-time extension check, kept separate from the deposit re-check (H3); retroactive withdrawal rules (M1); blocklist not enforced at deposit (M2); transfer-fee accounting (M3); pre-funded create_account DoS (M4); the Low/Info items as findings or hardening- leads. Used for tuning from 1.5 onward, so this scores fit, not generalisation.",
+      "files": [
+        "program/src"
+      ],
+      "assertions": [
+        "[source] C1 withdraw mint not checked against the receipt mint",
+        "[source] H1 stale TLV tail on a shorter extension update (latent at b27a635)",
+        "[source] H2 hook CPI forwards the user signer",
+        "[source] H3 mint close authority lets a re-created mint bypass the allow-time extension check",
+        "[source] M1 timelock / hook / arbiter changes apply retroactively",
+        "[source] M2 blocked extensions not re-checked at deposit",
+        "[source] M3 transfer-fee mint over-credits deposits",
+        "[source] M4 pre-funded PDA blocks create_account",
+        "[source] L1-L5, I1-I2 reported as findings or hardening- leads",
+        "H3 and M2 stay two items (different fixes)"
+      ]
     }
   ]
 }

@@ -234,3 +234,40 @@ generalisation**, and do not add a reference entry that cites a held-out target.
   and the §7 First Flights have not been graded and are the held-out candidates.
 - Strip comments before every run (§0). Template comments name the bug class in the line that
   holds it.
+- **§9 (`solana-program/escrow`)** was scored blind on 1.4 and then used to tune 1.5: the fix-aware
+  dedup rule, **B23**–**B25**, the privilege-passthrough access gap, the hardening LEAD checklist,
+  the honest-admin recoverability rule and the account map's native / Pinocchio idioms. From 1.5 on
+  it is fit, not generalisation.
+
+## 9. solana-program/escrow — Accretion audit A26SFR3 — `@b27a635`
+
+<https://github.com/solana-program/escrow> · report:
+<https://github.com/accretion-xyz/audit-reports/blob/main/2026-accretion-solana-foundation-escrow-audit-A26SFR3.pdf>
+
+**Used for tuning from 1.5 onward — not blind.** Version 1.4 was scored on this target blind; the
+misses drove the 1.5 changes (§8). Score later runs on it as **fit**, not generalisation.
+
+Scope = `program/src/**` at the audited commit `b27a63562bf861470ed1012211251b4320738c29` (Pinocchio,
+SPL Token and Token-2022, a TLV extension block per escrow). The fix-review commit is `36187ad`;
+check out `b27a635` with `git archive` (§0) so the fixes are not in reach. Documented: 1 Critical,
+3 High, 4 Medium, 5 Low, 2 Informational. Summarized from the report:
+
+- **C1** withdraw does not check the passed mint against the receipt's mint — a depositor withdraws
+  a different token from the escrow's vaults.
+- **H1** the extension-update helper rewrites a TLV entry in place and leaves stale bytes when the
+  new entry is shorter. At `b27a635` no caller shrinks an entry (the report's link points at a later
+  commit), so score it as a latent helper defect.
+- **H2** the hook CPI forwards the user's signer and writable flags to the configured hook program.
+- **H3** an allow-listed Token-2022 mint with a mint close authority can be closed and re-created
+  with blocked extensions after the allow-time check.
+- **M1** timelock / hook / arbiter changes apply to deposits made before the change.
+- **M2** the blocked-extension list is checked when a mint is allowed, not at deposit.
+- **M3** a transfer-fee mint makes the recorded deposit larger than the amount received.
+- **M4** a System `create_account` at a predictable PDA fails once someone pre-funds the address
+  (lamport-transfer DoS).
+- **L1** the post-withdraw hook does not receive the receipt. **L2** one loader of the allowed-mint
+  account skips its self-validation. **L3** the layout version byte is not checked on read.
+  **L4** timelock, arbiter and hook cannot be updated or removed. **L5** discriminator `0` equals
+  zeroed data.
+- **I1** deposit and withdraw do not check the mint's owner explicitly. **I2** the extensions
+  account's owner is implied by its PDA, not checked.
