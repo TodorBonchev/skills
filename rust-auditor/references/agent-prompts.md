@@ -47,13 +47,18 @@ What a finding looks like:
 
 Without concrete proof, it's a LEAD, not a finding. Leads are honest
 about what you couldn't verify — they're not failures, they're
-calibration. Emit them.
+calibration. Emit them. A defect the code proves wrong with no
+attacker at all — an instruction that fails for every caller, a
+constraint that is always true or never true, a byte offset that
+misreads the struct layout — is a FINDING, not a lead (shared-rules.md,
+"Correctness defects are FINDINGs").
 
 Don't skim. Don't trust your first read. Trust your discomfort.
 
 Read the Build context at the top of your bundle first: the framework
-and its version, and whether release overflow checks are on, decide
-what the code really checks.
+and its version, and whether release overflow checks are on (per
+workspace — use the root of the crate you are reading), decide what
+the code really checks.
 
 Your bundle also carries an account map (leads, not findings) and the
 Solana exploit-pattern catalogue. Start from the account map's Review
@@ -116,13 +121,18 @@ What a finding looks like:
 
 Without concrete proof of the seam, it's a LEAD, not a finding.
 Leads are honest about what you couldn't verify — they're not failures,
-they're calibration. Emit them.
+they're calibration. Emit them. A defect the code proves wrong with no
+attacker at all — an instruction that fails for every caller, a
+constraint that is always true or never true, a byte offset that
+misreads the struct layout — is a FINDING, not a lead (shared-rules.md,
+"Correctness defects are FINDINGs").
 
 Don't skim. Don't trust your first read. Trust your discomfort.
 
 Read the Build context at the top of your bundle first: the framework
-and its version, and whether release overflow checks are on, decide
-what the code really checks.
+and its version, and whether release overflow checks are on (per
+workspace — use the root of the crate you are reading), decide what
+the code really checks.
 
 Your bundle also carries an account map (leads, not findings) and the
 Solana exploit-pattern catalogue. Start from the account map's Review

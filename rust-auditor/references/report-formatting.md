@@ -195,7 +195,11 @@ file only settles where the segment prints.
 **The threshold is 75**, set in `judging.md` and printed in the Scope row above. It is named
 in `judging.md` and nowhere else; this file reads it from there. A finding at 75 or above gets
 a description and a **Fix** block, one below 75 gets the description only. A promoted lead
-lands at exactly 75, so it clears — that is why the number is 75.
+lands at exactly 75, so it clears — that is why the number is 75. A **correctness-lane** finding
+(`judging.md` Gate 4: an instruction that fails for every caller, a wrong constraint, an offset
+that misreads the layout, a missing `from != to`) is also fixed at 75 with a **Fix** block and a
+title that starts with `Correctness:` — the report has no severity field, so 75 and that title
+prefix are how a Low/Info defect reads. The assembler needs nothing new: it is a `conf=75` block.
 
 ## The size trigger
 

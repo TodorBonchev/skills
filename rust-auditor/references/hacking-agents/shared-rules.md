@@ -12,7 +12,8 @@ The top of `source.md` says which framework each crate uses and whether release 
 
 - **Framework.** Anchor checks a lot for you — but only for the account types and constraints that are actually written. Native `solana-program` and Pinocchio check **nothing** you do not write by hand: every signer, owner, discriminator, PDA and program ID check is a line of code or it does not exist. Pinocchio also hands out unchecked borrows (`borrow_mut_data_unchecked`, raw pointers) that skip the `RefCell` guard. A repo can mix frameworks; judge each crate by its own manifest.
 - **Framework version.** The manifests carry the exact `anchor-lang` / `solana-program` / `pinocchio` / `spl-token-2022` versions. What `close`, `init_if_needed`, `realloc` and duplicate-account handling do has changed across Anchor releases. When a finding depends on what the framework checks, read that version's source under `~/.cargo/registry/src/` rather than assuming.
-- **Release overflow checks.** `not set` or `OFF` means `+ - *` wrap silently in the deployed program. `on` means they panic. `as` casts truncate and `wrapping_*` wraps either way.
+- **Release overflow checks.** `not set` or `OFF` means `+ - *` wrap silently in the deployed program. `on` means they panic. `as` casts truncate and `wrapping_*` wraps either way. The setting is **per workspace**: when the line says `differs per workspace`, it names the crates under each root — use the root of the crate you are reading (a nested or `exclude`d workspace is built with its own profile, not the top-level one).
+- **Hand-coded byte offsets (native / Pinocchio).** When a handler reads account data by fixed offsets (`data[1..33]`, `data[33..41]`, `*(ptr.add(9) as *const u64)`), lay the offsets against the struct the account holds. Under `#[repr(C)]` each field is aligned to its size (`u8` then `u64` puts 7 bytes of padding at 1..8); under `#[repr(packed)]` there is no padding; an Anchor or `bytemuck` account starts with its discriminator. A range that does not start and end on field boundaries reads the wrong bytes. Then ask what that does: a check built on the wrong bytes either **never passes** (the instruction fails for every caller — a correctness finding, `judging.md` Gate 4) or **compares bytes the attacker controls** (a bypass). It also decides whether a missing-signer or owner bug next to it is reachable at all — an instruction that always fails cannot be exploited, so report the offset, not the bypass. The account map raises `offset-mismatch` when it can match the struct.
 
 ## Out of scope inside in-scope files
 
@@ -43,7 +44,7 @@ After scanning: escalate every finding to its worst exploitable variant (an inst
 
 ## The account map is leads, not findings
 
-The account map at the end of your bundle is produced by pattern matching (a script, with any `?` cells completed by the orchestrator). Its **Review leads** table points at suspicious spots — an authority written with no signer, an `UncheckedAccount` with no `/// CHECK`, a PDA whose seeds lack a user key, a CPI to a non-constant program, unvalidated `remaining_accounts`. Start there, but a map line is never a finding: confirm your own exploit path in the source before you report anything, and a clean map is not a clean program.
+The account map at the end of your bundle is produced by pattern matching (a script, with any `?` cells completed by the orchestrator). Its **Review leads** table points at suspicious spots — an authority written with no signer, a key compared against stored data with no `is_signer` (`key-compared-no-signer`), an `UncheckedAccount` with no `/// CHECK`, a PDA whose seeds lack a user key, a caller-chosen bump, a hand offset that misses the struct layout (`offset-mismatch`), a CPI to a non-constant program, unvalidated `remaining_accounts`. Global singletons are folded: one `singleton-init` lead where a constant-seed PDA is created (check who can call it first), one `singleton-write` when nothing in scope creates it, one `global-signer` lead per program for constant CPI signer seeds (check every listed CPI is gated). Start there, but a map line is never a finding: confirm your own exploit path in the source before you report anything, and a clean map is not a clean program.
 
 ## The Solana threat model — hold it for every instruction
 
@@ -55,13 +56,17 @@ The account map at the end of your bundle is produced by pattern matching (a scr
 
 ## Do not report
 
-Admin-only instructions doing admin things. Standard DeFi tradeoffs (MEV, rounding dust, the first-depositor case when the program seeds or locks initial shares). Self-harm-only bugs (the caller passes their own wrong account and loses their own tokens). "The admin or the upgrade authority can take the funds" without a concrete mechanism. Compute-unit micro-optimisations. Bugs only in `#[cfg(test)]` code.
+Admin-only instructions doing admin things — **except** an honest admin call that cannot be undone or that rewrites value users already accrued (single-step authority transfer, an unbounded setter that bricks the program, a fee / rate / mint / index change with no settle first). That is an honest-admin hazard (`judging.md` Gate 3): report it, name the honest call. Standard DeFi tradeoffs (MEV, rounding dust, the first-depositor case when the program seeds or locks initial shares). Self-harm-only bugs (the caller passes their own wrong account and loses their own tokens). "The admin or the upgrade authority can take the funds" without a concrete mechanism. Compute-unit micro-optimisations. Bugs only in `#[cfg(test)]` code.
 
 ## Output
 
 Return findings as structured blocks:
 
 FINDINGs have concrete, unguarded, exploitable attack paths. LEADs have real code smells with partial paths — default to LEAD over dropping.
+
+**Correctness defects are FINDINGs, not LEADs.** When the code **proves** that an instruction fails for every caller, that a constraint is always true or never true, that a hand offset misreads the struct layout, or that a two-leg route accepts the same mint or account on both legs (no `from != to`), emit a FINDING with `bug_class` naming the defect and `proof:` quoting the line and the value, type or layout that makes it wrong. No attacker is needed; `judging.md` Gate 4 scores it in the correctness lane (confidence 75, with a Fix). Do not park it as a lead because "nobody profits".
+
+**A stub is not a defence.** A privileged instruction whose body is only `msg!(..)` / `Ok(())` behind a broken access check is still a FINDING: describe the impact its name and accounts state (`emergency_withdraw` drains the vault), and say `Stubbed: impact as named.`
 
 **Every FINDING must have a `proof:` field** — concrete values, traces, account lists or state sequences from the actual code. No proof = LEAD, no exceptions.
 

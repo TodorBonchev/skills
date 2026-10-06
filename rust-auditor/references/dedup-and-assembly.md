@@ -75,6 +75,8 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
 
 3. **Lead promotion / rejection.**
    - LEAD → FINDING (conf 75) if: full exploit chain in source, OR `[agents: 2+]` demoted (not rejected) same issue.
+   - LEAD → FINDING (conf 75, **with** Fix, title starts `Correctness:`) if the code proves a **correctness defect** — an instruction that fails for every caller, an always-true / never-true constraint, a byte offset that misreads the struct layout, a two-leg route with no `from != to` — and the only thing missing is an attacker or a victim (`judging.md` Gate 4, correctness lane). If the defect also locks funds or pays an attacker, gate it as a normal finding instead.
+   - A privileged instruction that is only a stub (`msg!` / `Ok(())`) behind a real access defect is judged by its **named** impact at -15 (`judging.md` Gate 4, stubbed impact) — never rejected because "it does nothing yet". An irreversible or retroactive **honest** admin call clears gate 3 (`judging.md` Gate 3, honest-admin hazard); a malicious-admin claim with no amplifier stays rejected.
    - `[agents: 2+]` does NOT override a code path that interrupts attack before harm — demote to LEAD if execution uncertain.
    - No deployer-intent reasoning — what code allows, not how deployer might use it.
 
