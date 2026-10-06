@@ -11,7 +11,8 @@ Two things are specific to Solana:
 - **Account map.** Before the agents run, a script maps every instruction - its accounts and their
   signer / owner / PDA constraints, its cross-program calls and the state it writes - and highlights
   review leads such as an authority written with no signer check or a CPI to a program ID that is
-  not pinned.
+  not pinned. On native and Pinocchio code it follows checks made in helpers and in typed account
+  constructors, so they do not raise false leads.
 - **Exploit patterns.** Every agent carries a catalogue of real Solana incidents (Wormhole, Cashio,
   Crema, Mango, Loopscale and more), published bug classes and lessons from public audit reports,
   each with its source, mapped to the agent that hunts it.
@@ -101,6 +102,15 @@ default is off, so integer overflow wraps in the deployed program). The setting 
 - **Ignore `.rust-auditor/` in git.** Every scan writes its run files there, and `--memory` keeps a findings ledger there.
 
 ## Changelog
+
+**1.5** - Dedup compares fixes before it merges two bug-class labels: different fixes stay two
+items. New bug classes B23-B25: a mint closed and re-created after an allow-time extension check, a
+user's signer forwarded to a program the user did not choose (now an access gap in judging), and a
+shorter variable-length rewrite that leaves a stale tail. Missing defences with no path today go out
+as `hardening-` leads that are never promoted; paired hooks and callbacks are checked for equal
+context; an honest-admin hazard users can recover from is scored as bounded. The account map follows
+native and Pinocchio idioms: signer and owner checks in helpers, typed account structs validated in
+their constructor, program names from `Cargo.toml`, and generic handler names qualified by module.
 
 **1.4** - Solana facts in the agents checked against Anchor, SPL Token, Pinocchio and System-program
 source (account close, write-back, `init_if_needed`, bumps, rent, discriminator overrides,
