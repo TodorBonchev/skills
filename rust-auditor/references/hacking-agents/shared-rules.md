@@ -2,7 +2,7 @@
 
 ## Bundle contents
 
-Your bundle is five concatenated files: all in-scope source code (opening with a **Build context** header and the crate manifests), the SOP (HOW to think), your specialty agent (WHAT to look for), these shared rules (output format, dedup tags), and the report language rules (HOW to word a finding).
+Your bundle is concatenated files: all in-scope source code (opening with a **Build context** header and the crate manifests), the SOP (HOW to think), your specialty agent (WHAT to look for), these shared rules (output format, dedup tags), the report language rules (HOW to word a finding), the Solana exploit-pattern catalogue (incidents and bug classes to hunt for), and the account map (a pre-scan list of leads — accounts, CPIs, state and auto-highlighted red flags per instruction). When memory is on, a "Known findings" section is appended last.
 
 Read the whole bundle once at the start. The bundle contains all in-scope source. Use Read/Grep only for cross-file searches or out-of-scope context (`tests/`, client and SDK crates, the IDL, and framework sources under `~/.cargo/registry/src/`) — do not re-read in-scope files for the initial scan.
 
@@ -40,6 +40,10 @@ The location line in a report reads `program::function`.
 When you find a bug in one instruction, **weaponize that pattern across every other instruction and program in the bundle.** Search by account name, by account type and by code pattern. A missing owner check on `config` in `deposit` means you check every instruction that takes `config`; a PDA whose seeds lack the user key in one place means you check every PDA built from the same seeds. Missing a repeat instance is an audit failure.
 
 After scanning: escalate every finding to its worst exploitable variant (an instruction that fails may hide a fund theft, and a fake account that sets one field may set them all). Then revisit every instruction where you found something and attack the other branches and the other accounts.
+
+## The account map is leads, not findings
+
+The account map at the end of your bundle is produced by pattern matching (a script, with any `?` cells completed by the orchestrator). Its **Review leads** table points at suspicious spots — an authority written with no signer, an `UncheckedAccount` with no `/// CHECK`, a PDA whose seeds lack a user key, a CPI to a non-constant program, unvalidated `remaining_accounts`. Start there, but a map line is never a finding: confirm your own exploit path in the source before you report anything, and a clean map is not a clean program.
 
 ## The Solana threat model — hold it for every instruction
 

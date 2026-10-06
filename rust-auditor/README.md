@@ -5,7 +5,10 @@ A security agent for Solana programs written in Rust - findings in minutes, not 
 Covers Anchor, native `solana-program` and Pinocchio programs. It runs the same engine as the
 [solidity-auditor](../solidity-auditor/) - 12 parallel attacker agents, dedup, a four-gate
 judge, loop mode and a findings memory - with every agent rewritten for the Solana account
-model: missing signer and owner checks, account type confusion, PDA seed collisions and
+model. Before the agents run, a **pre-scan account map** walks every instruction (accounts and
+their signer/owner/PDA constraints, cross-program calls, state writes) and auto-highlights review
+leads, and each agent carries a catalogue of **real Solana exploit patterns** - Wormhole, Cashio,
+Mango, Nirvana and more - mapped to the bug class it hunts. The agents cover: missing signer and owner checks, account type confusion, PDA seed collisions and
 non-canonical bumps, arbitrary CPI, stale accounts after CPI, closed-account revival,
 Token-2022 extensions, oracle staleness and integer overflow in release builds.
 
@@ -37,6 +40,20 @@ report at the end, not one per run.
 
 ```
 run rust auditor in loop mode
+```
+
+## Verify the real bugs (`--poc`)
+
+Pass `--poc` and, after judging, the skill tries to **prove** each High/Critical finding by writing
+and running a regression test in a scratch copy of your project. A bug that reproduces ships with a
+failing test you can keep (`PoC: CONFIRMED`); a finding that can't be reproduced drops to a lead
+(`PoC: NOT REPRODUCED`), so false positives fall out of the findings list. If the build toolchain
+isn't installed it says so rather than guessing (`PoC: UNVERIFIED`). It writes only under
+`.rust-auditor/runs/{stamp}/poc/` and **never touches your source or tests**. A plain scan runs no
+builds and is unaffected.
+
+```
+run rust auditor with --poc
 ```
 
 ## What it scans

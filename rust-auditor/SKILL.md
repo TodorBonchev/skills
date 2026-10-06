@@ -59,6 +59,7 @@ You are the orchestrator of a parallelized security audit of Rust programs that 
 
 - `--memory` (off by default): remember findings between scans in a ledger at `.rust-auditor/memory.tsv` in the audited repo. Any pass count above 1 turns memory on by itself, whether or not the flag was passed.
 - `--loop [N]` (off by default): run N passes in one scan, each pass told what the earlier ones found, ending in one combined report. `--loop` with no number is **3** passes. `--loop 1` is a 1-pass scan. The flag exists for runners who prefer flags; when it is passed the picker in Turn 1b does not ask, it obeys.
+- `--poc` (off by default): after judging, try to verify each **High/Critical** finding by writing and running a regression test that demonstrates whether the bug is real. Confirmed bugs ship with a failing test; findings that cannot be reproduced drop to leads. It writes only under `.rust-auditor/runs/{stamp}/poc/` and builds in a scratch copy of the repo — **never** the user's source or tests. The full procedure, harness choice, budget and labels (`CONFIRMED` / `NOT REPRODUCED` / `UNVERIFIED`) are in `{resolved_path}/poc-guide.md`. A plain scan without this flag runs no builds and reaches none of this.
 
 **Vocabulary (used throughout this file):**
 
@@ -324,6 +325,20 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
    **This is how the framework reaches the agents.** The **Build context** header sits at the top of `source.md`, so every one of the twelve bundles opens with it: which framework each crate uses (Anchor, native `solana-program`, Pinocchio — a repo can mix them), the exact framework versions in the manifests, and whether the **workspace-root** release profile turns overflow checks on. Cargo ignores `[profile.*]` in member crates, so only the root manifest decides; `cargo build-sbf` builds with the release profile, and the release default is **off** — integer overflow wraps in the deployed program. That one line changes how every arithmetic finding is scored, which is why it is computed by shell and not left for twelve agents to infer.
 
    The two `printf` lines it prints are the only output this step adds. Print them with the line counts below; they are not part of the report.
+
+**Turn 2 step 1b — Account map (pre-scan). Runs once per scan, every mode, with step 1.** Build the account map the twelve agents read as leads:
+
+```bash
+python3 {resolved_path}/account-map.py --out .rust-auditor/runs/{stamp}/account-map.md {file list}
+```
+
+The script is Python standard library + `rg` only; it never installs anything and writes only the `--out` file. It lists every instruction handler with its accounts (signer / mut / owner / type / PDA seeds and bump source / init / close / constraints), its cross-program calls (the target program and how its ID is validated, plus signer seeds), the state it writes and how it is gated, and opens with an auto-highlighted **Review leads** section — authority-bearing accounts written with no signer check, `UncheckedAccount` with no valid `/// CHECK`, PDA seeds lacking a user key, CPI to a non-constant program ID, unvalidated `remaining_accounts`. It parses **Anchor** structurally; for **native `solana-program` and Pinocchio** it fills what it can and lists the rest under a **Needs completion** section.
+
+> **The map is leads, never findings.** Every line is a place to look produced by pattern matching; an agent confirms each one in the source and reports nothing on the map's word alone. The script cannot see logic bugs, so an empty Review-leads section is not a clean bill.
+
+**When the script prints a "Needs completion" list** (native/Pinocchio handlers whose accounts it could not fully resolve, or accounts read by index), read those handlers and complete the `?` cells — append a short `> model-completed:` note per handler to `account-map.md` so the agents get a full map. This is the only model work this step does, and only for native/Pinocchio gaps; an all-Anchor repo needs none. Do **not** expand this into a second review pass — filling the named cells is the whole of it.
+
+This step writes one file under `.rust-auditor/runs/{stamp}/`, like the run files — the plain-path rule protects the working directory and printed output, not the runs directory, so a 1-pass scan writes the map too. Print the script's one stderr summary line (`account map: N instruction(s), M review lead(s), K need completion`); it is not part of the report.
 2. **Turn 2 step 2 — Name map, prune and known findings** (below). SKIPPED whole when memory is off. Parts a and b run once per scan; part c runs **every pass**, because the ledger it reads grows as the loop learns.
 3. **Every pass.** Agent bundles, in a single Bash command using `cat` (not shell variables or heredocs) = `source.md` + agent-specific files:
 
@@ -342,9 +357,11 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
 | `agent-11-bundle.md`  | `source.md` + `senior-auditor-sop.md` + `hacking-agents/trust-gap-agent.md` + `hacking-agents/shared-rules.md`                                 |
 | `agent-12-bundle.md`  | `source.md` + `senior-auditor-sop.md` + `hacking-agents/flow-gap-agent.md` + `hacking-agents/shared-rules.md`                                  |
 | **every one of the 12** | **+ `report-language.md`, appended after `shared-rules.md`** — unconditional, every mode, every pass. The agent's `description:` is the seed of the report's Description, so the language rule has to reach the writer and not only the editor. |
+| **every one of the 12** | **+ `solana-exploit-patterns.md`, appended after `report-language.md`** — unconditional, every mode, every pass. Each agent file names, under **Exploit patterns**, the incidents and bug classes it owns; the catalogue has to be in the bundle for the agent to read those sections. |
+| **every one of the 12** | **+ `.rust-auditor/runs/{stamp}/account-map.md`, appended after the exploit patterns** — unconditional, every mode, every pass. It is the pre-scan leads map from step 1b; every agent gets the same map. |
 | **every one of the 12** | **+ `{bundle_dir}/known-findings.md`, appended last** — only when memory is on **and** step 2 wrote that file. Never appended on a plain scan, and never appended when the ledger holds no record. |
 
-Each bundle = source.md (Build context + source) + SOP + specialty + shared-rules + report-language (+ known findings, when there are any). Agents read the bundle; no Read/Grep needed for the initial scan. Targeted Read/Grep allowed for cross-file investigation.
+Each bundle = source.md (Build context + source) + SOP + specialty + shared-rules + report-language + solana-exploit-patterns + account-map (+ known findings, when there are any). Agents read the bundle; no Read/Grep needed for the initial scan. Targeted Read/Grep allowed for cross-file investigation.
 
 **Turn 2 step 2 — Name map, prune and known findings.** **SKIP this step entirely when memory is off.** It lives in Turn 2 and not in a turn of its own because all three parts read `source.md`, which Turn 2 has just built — a separate turn would only carry that file across a boundary. It is numbered **2**, ahead of the bundle cat, because part c writes a file every bundle carries; a pruned record must never reach an agent.
 
@@ -480,6 +497,8 @@ Two rules that file carries, repeated here because they are conditions and not t
 
 **While you wait, on the first pass only, Read `{resolved_path}/dedup-and-assembly.md`.** It holds the whole of Turn 4 and Turn 5. This turn is the one point in the scan where the orchestrator has nothing else to do, so the read costs no wall-clock; and having it in hand before Turn 4 starts is what keeps Turn 4 from improvising. Later passes already hold it.
 
+**When `--poc` was passed, Read `{resolved_path}/poc-guide.md` here too** (first pass only). The verification step runs after judging, so having the guide in hand before Turn 4 ends avoids a separate read. Without `--poc`, do not read it — there is no verification step to run.
+
 **When an agent dies.** Continue the pass with the eleven that came back. **Never respawn it, in any mode.** A retry costs an unbounded wait for one twelfth of the coverage, and a loop covers it for free — the next pass runs the same twelve specialties again, knowing what this one found. Record the loss in all three places, or it is a silent coverage loss: the pass summary line (Turn 4 step 5), the `run-K.md` header, and the report's `Passes` row.
 
 **When a whole pass produces nothing** — the bundle build failed, or all twelve died:
@@ -496,6 +515,8 @@ printf '%s\t%s\n' pass_{K}_failed 1 >> .rust-auditor/runs/{stamp}/scope.tsv
 **Turn 4 — Deduplicate, validate & record.** Runs **every pass**, and it is the end of the loop body: deduplicate this pass's agent results, gate-evaluate, tag, record the pass, write the ledger. **It prints no report** — there is exactly one report per scan and Turn 5 prints it. Do NOT print an intermediate dedup list.
 
 **Steps 4 and 6 are SKIPPED entirely when memory is off.** Every other step runs at any pass count.
+
+**The PoC verification step (`dedup-and-assembly.md` Turn 4 step 3b) is SKIPPED entirely unless `--poc` was passed.** A plain scan runs no builds and labels no finding. When `--poc` is on, it runs once per scan after the last pass has gated, per `{resolved_path}/poc-guide.md`.
 
 Follow `{resolved_path}/dedup-and-assembly.md`, section **"Turn 4"**, step by step.
 
