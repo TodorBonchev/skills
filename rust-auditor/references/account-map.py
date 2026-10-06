@@ -200,6 +200,9 @@ def functions(src, start=0, end=None):
 # --------------------------------------------------------------------------
 
 RAW_TYPES = ("AccountInfo", "UncheckedAccount")
+# A /// CHECK note that defers validation to another program/CPI/callee is a frequent
+# false assumption (e.g. GLAM audit E20: a sibling CPI path did not actually validate it).
+DEFER_CHECK = re.compile(r"(validated|checked|verified|constrained|enforced|handled)\b.*\b(by|in|via|through)\b|(target|downstream|callee|external|cpi|invoked|drift|kamino)\b.*\bprogram\b|by the (target|callee|cpi|downstream|invoked)", re.I)
 AUTH_NAME = re.compile(r"(^|_)(authority|admin|owner|signer|creator|manager|operator|governor|maker|taker|depositor|withdrawer|delegate)($|_)", re.I)
 USER_NAME = re.compile(r"(user|owner|authority|payer|maker|taker|depositor|signer|creator|wallet|player|buyer|seller|staker|borrower|lender|member|voter|destination|recipient|beneficiary|receiver)", re.I)
 SYSVAR_NAME = re.compile(r"^(rent|clock|instructions?|ix_sysvar|instruction_sysvar|sysvar_\w+|recent_blockhashes|slot_hashes|stake_history|epoch_schedule)$", re.I)
@@ -878,6 +881,8 @@ def anchor_flags(inst, st, res):
                 fl.append((key, "raw-checked-in-code", "`%s: %s` has no constraint; the handler checks its %s by hand — confirm every instruction that takes it does the same" % (f.name, f.kind, " and ".join(sorted(by_hand))), inst))
             elif not f.has_check_doc:
                 fl.append((key, "unchecked-account", "`%s: %s` has no `/// CHECK` comment and no owner/address/seeds/constraint" % (f.name, f.kind), inst))
+            elif DEFER_CHECK.search(f.check_doc or ""):
+                fl.append((key, "check-deferred", "`%s: %s` has a `/// CHECK` that defers validation to another program/CPI (\"%s\") — confirm that program actually checks it on THIS path; a sibling path (e.g. deposit) validating it does not mean this one (e.g. withdraw) does" % (f.name, f.kind, squash(f.check_doc, 70)), inst))
             else:
                 fl.append((key, "check-comment-only", "`%s: %s` relies on its `/// CHECK` comment alone (\"%s\") — verify the claim holds in code" % (f.name, f.kind, squash(f.check_doc, 70)), inst))
         if f.is_raw and SYSVAR_NAME.match(f.name) and not f.val("address") and "key" not in hand.get(f.name, ()):
@@ -999,7 +1004,7 @@ def render(srcs, entries, flags, dispatchers, needs):
     if not flags:
         out.append("_None raised by the script. That is not a clean bill: the script cannot see logic bugs._\n")
     else:
-        order = ["no-signer", "authority-not-signer", "arbitrary-cpi", "unchecked-account", "raw-deserialize", "write-unbound", "sysvar-unchecked",
+        order = ["no-signer", "authority-not-signer", "arbitrary-cpi", "check-deferred", "unchecked-account", "raw-deserialize", "write-unbound", "sysvar-unchecked",
                  "user-bump", "pda-no-user-key", "signer-seeds-no-user-key", "duplicate-mutable", "manual-close", "reinit",
                  "init-if-needed", "type-cosplay", "remaining-accounts", "stale-after-cpi", "check-comment-only", "raw-checked-in-code"]
         flags = sorted(flags, key=lambda x: (order.index(x[1]) if x[1] in order else 99, x[0]))
