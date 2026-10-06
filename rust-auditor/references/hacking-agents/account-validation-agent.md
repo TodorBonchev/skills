@@ -38,10 +38,10 @@ For every account that fails any of the questions in a way the instruction doesn
 ## Step 3 — For every CPI site: six questions
 
 1. **Target.** Is the called program's ID fixed or verified (question 10 above)?
-2. **Signer privileges.** Which signer privileges flow into the callee — the user's signature, and the program's PDA signature through `invoke_signed`? Do the signer seeds bind the user or pool this call is for, or is it a shared authority PDA that can sign for anyone's account?
+2. **Signer privileges.** Which signer privileges flow into the callee — the user's signature, and the program's PDA signature through `invoke_signed`? Do the signer seeds bind the user or pool this call is for, or is it a shared authority PDA that can sign for anyone's account? Who chose the callee: when it is a hook, plugin or callback picked by the admin, a mint or a pool rather than by the signing user, the user's signer must not reach it (account metas built from the caller's accounts copy `is_signer` — **B24**).
 3. **Writable accounts.** Which writable accounts are passed? Could the callee legitimately change one the program later relies on?
 4. **After the call.** Does the program re-read every account the CPI changed (`reload()`, re-deserialise) before using it?
-5. **Token vs Token-2022.** Plain `transfer` vs `transfer_checked` (mint and decimals); Token-2022 extensions on the mint (transfer fee changes the amount received, transfer hook needs extra accounts and can fail); a hardcoded `spl_token::ID` that rejects Token-2022 mints, or an `Interface` that accepts a Token-2022 mint the math does not handle.
+5. **Token vs Token-2022.** Plain `transfer` vs `transfer_checked` (mint and decimals); Token-2022 extensions on the mint (transfer fee changes the amount received, transfer hook needs its `ExtraAccountMetaList` and extra accounts and fails without them, a mint close authority lets the mint be closed and re-created at the same address with other extensions — an extension check done only when the mint was allow-listed then trusts a mint it never saw, **B23**); a hardcoded `spl_token::ID` that rejects Token-2022 mints, or an `Interface` that accepts a Token-2022 mint the math does not handle.
 6. **ATA assumptions.** An associated token account address depends on the wallet, the mint **and the token program**; a user may hold tokens in a non-ATA account; an ATA can be closed by its owner and re-created; `associated_token::token_program` must match the mint's program.
 
 ## Step 4 — For every `remaining_accounts` use: four questions
@@ -58,6 +58,16 @@ For every account that fails any of the questions in a way the instruction doesn
 3. Extra trailing bytes — ignored by `deserialize`, rejected by `try_from_slice`; does the program depend on which?
 4. A Borsh `Vec` or `String` whose length prefix is attacker-supplied — a huge length allocates past the heap and the instruction fails.
 5. Zero, `u64::MAX` and `None` for every numeric and optional argument.
+
+## Step 6 — Hardening checklist (LEADs only)
+
+After Steps 2–5, walk this list once per account type and emit every hit as a LEAD with `bug_class` starting `hardening-` (`shared-rules.md`). These are missing defences with no path today; they are cheap to report and are what a manual review lists as Low / Informational.
+
+1. **Version byte.** The layout carries a version or `account_type` byte that is written on create but never checked on read.
+2. **Zero-valued tag.** A discriminator or type tag whose valid value is `0`, so zeroed or freshly allocated data already passes as that type.
+3. **Sibling loader.** One account type with two loaders (`load` and `from_account`, `try_from` and an `unchecked` variant) where one skips the owner, discriminator or self-validation the other does.
+4. **Implied owner.** An owner check that exists only because the address is a PDA of this program — correct today, gone the day the derivation changes or the account is read on another path.
+5. **Implied program.** A token program, mint owner or sysvar that is never compared because only one value can occur today (a mint owner taken for granted in deposit or withdraw).
 
 ## Discipline
 
@@ -85,7 +95,7 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P1** sysvar substitution. **P2** unvalidated root-of-trust account. **P3** fake account on a weak owner check. **P7** authority read from a caller-supplied account. **P9** an integration's CPI program taken unvalidated from the caller.
 - **B1** missing signer — including keys compared against stored data with no `is_signer` (account-map `key-compared-no-signer`). **B2** missing owner. **B3** type cosplay. **B4** reinit / init front-running. **B5** arbitrary CPI. **B6** duplicate mutable accounts. **B7** bump / PDA canonicalization. **B8** close / revival. **B9** sysvar address.
-- **B12** Token-2022 mints and accounts accepted without an extension check, or `Token` used where `InterfaceAccount` is in play. **B13** account-creation griefing — a hand-written `create_account` at a predictable address an attacker pre-funds. **B15** validation deferred to a callee/CPI that doesn't do it (account-map `check-deferred`). **B17** same-asset round trip — B6 one level up, from aliased accounts to aliased mints / vaults. **B19** `close =` to an unconstrained raw destination (account-map `close-to-unchecked`). **B20** a System transfer out of a PDA that carries data. **B21** custody taken by `SetAuthority` that leaves a `close_authority` behind. **B22** two variable-length seeds that run together into another PDA.
+- **B12** Token-2022 mints and accounts accepted without an extension check, or `Token` used where `InterfaceAccount` is in play. **B23** an allow-time extension check that a closed and re-created mint bypasses. **B24** account metas copied from the caller's accounts into a hook CPI, the user's signer included. **B13** account-creation griefing — a hand-written `create_account` at a predictable address an attacker pre-funds. **B15** validation deferred to a callee/CPI that doesn't do it (account-map `check-deferred`). **B17** same-asset round trip — B6 one level up, from aliased accounts to aliased mints / vaults. **B19** `close =` to an unconstrained raw destination (account-map `close-to-unchecked`). **B20** a System transfer out of a PDA that carries data. **B21** custody taken by `SetAuthority` that leaves a `close_authority` behind. **B22** two variable-length seeds that run together into another PDA.
 - **L1** an allow-list / program-ID gate missing on one integration path. **L2** a destination account trusted to the callee. **L7** a config initializer anyone can call first. **L8** a privileged setter with no admin check. **L10** a token account constrained differently across paired instructions. **L11** freeze-authority, SPL account verification and rent-exemption checks. Hand offsets are checked against the `#[repr(C)]` / packed layout (account-map `offset-mismatch`). See **Native / Pinocchio manual validation** below.
 
 ## Native / Pinocchio manual validation
