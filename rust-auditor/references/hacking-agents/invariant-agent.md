@@ -33,6 +33,10 @@ Extract every relationship that must hold:
 - **Break the supply invariant.** Every path that mints with the program's mint authority PDA must be matched by a deposit, and every burn by a withdrawal. Find the mint without the matching transfer in.
 - **Couple price reads across mutating paths.** A liquidation reads price and position at different points of the same instruction, around a CPI that moves the price; it pays the wrong amount.
 
+## Step 2b — Invariants the code breaks on its own (new in v1.3)
+
+Some broken invariants need no attacker: "every honest caller can complete this instruction" fails when a check compares the wrong things (a wallet against a token account, `destination == caller` where `destination` must be a token account), when a hand offset reads the wrong bytes of the struct, or when a constraint can never be true. "Two legs move two assets" fails when a route accepts the same asset on both legs. When the code proves the break, report it as a FINDING in the **correctness lane** (`judging.md` Gate 4 — confidence 75, with a Fix, title starting `Correctness:`), not as a lead because nobody profits. If the break also locks funds or pays someone, score it as a normal finding.
+
 ## Step 3 — Construct the exploit
 
 For every broken invariant: what initial state is needed, which instructions (and in which transaction) break it, which instruction extracts value, who loses.
@@ -52,3 +56,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P2** missing root-of-trust account validation breaks a supply invariant (Cashio). - **P8** rounding that violates conservation (SPL token-lending). - **B8** closing accounts / revival (manual lamports-to-zero, re-funded in the same tx). - **B4** re-initialization resetting live state.
 - **New (v1.2):** **B13** account-creation griefing as a DoS on a protocol invariant (users can't onboard). **L4** fee crystallization vs share/order ordering breaking the share invariant. **L9** a solvency invariant broken by precision loss.
+- **New (v1.3):** correctness-lane invariants (instruction always fails, constraint never true, offset misread); **B17** same-asset round trip.

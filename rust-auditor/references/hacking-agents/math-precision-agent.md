@@ -42,6 +42,8 @@ Other agents cover account validation, logic, state, and access control. You exp
 
 **Divide by an unconstrained edge value.** Integer division by zero **panics in every build** — `x / total_shares` when the pool is empty, `x / tick_spacing`, `x / decimals_factor`. Construct the input where the divisor reaches zero; a panic in a liquidation or withdrawal path locks other users' funds.
 
+**Check that "round up" and "round down" really happen (new in v1.3).** Read every rounding helper as the machine runs it, not as it is named. `f64` holds 53 bits of integer precision: `(amount as f64 * 10f64.powi(k)).floor() as u64` is round-to-nearest once the product passes 2^53 (≈ 9.007e15), so a "floor" can round **up** in the user's favour, and `.ceil()` on a value already rounded down by the cast can land one unit low. `as u64` from `f64` saturates (NaN → 0, negative → 0, too large → `u64::MAX`). An integer `(a + b - 1) / b` "ceil" overflows on large `a` when overflow checks are off; `a / b * c` floors before it scales. Then tie each tolerance to **who can trip it**: a solvency or peg check with an epsilon (`>= expected - 1`) is safe only when no unprivileged caller can repeat the rounding to walk the value through the gap.
+
 **Every finding needs concrete numbers.** Walk through the arithmetic with specific values and the integer types the code really uses. No numbers = LEAD.
 
 ## Output fields
@@ -57,3 +59,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P8** rounding direction lets a deposit/withdraw loop net positive (SPL token-lending). - **P5** flash-loan pricing-curve manipulation (Nirvana). - **B8** paired-conversion rounding in the user's favour. - **B10** integer overflow / `as` cast truncation — read the Build context for the overflow-checks setting.
 - **New (v1.2):** **L5** silent u64 overflow in withdrawal/accounting math with release overflow-checks off (Indentura H01/H02). **L9** imprecise multiplier / precision loss toward insolvency (M0 #3).
+- **New (v1.3):** `f64` rounding past 2^53 and float-to-int saturation; rounding helpers that do not round the way they are named.

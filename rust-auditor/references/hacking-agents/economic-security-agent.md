@@ -48,3 +48,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P4** oracle manipulation of a thin market (Mango). - **P5** flash-loan pricing-curve manipulation (Nirvana). - **P9** arbitrary-program CPI through an unvalidated price integration (Loopscale). - **P3** fake account feeding a fee/price calc (Crema). - **B12** Token-2022 extension assumptions (transfer fees, hooks, permanent delegate).
 - **New (v1.2):** **B16** missing slippage / payout bound on swap or withdraw. **L1** an allow-list enforced on one integration path but skipped on another (GLAM E07). **L4** fee crystallization ordered wrong, so a user nets extra shares (GLAM L10; M0 #2). **L9** imprecise multiplier drifting toward insolvency (M0 #3).
+- **New (v1.3):** **B17** same-asset round trip — fees, rewards or volume credited for a swap whose two legs are one asset. Retroactive fee / rate / index changes by an honest admin (`judging.md` Gate 3, honest-admin hazard).

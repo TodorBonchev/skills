@@ -70,6 +70,10 @@ For every admin instruction, check if it's a variant of a user-side instruction 
 2. The Beefy pattern: `deposit` had a guard against price manipulation, but `set_position_width` and `unpause` ran the same liquidity-rebalancing flow without it → a sandwich takes value on an admin parameter change.
 3. Devs under-test admin instructions. They view them as "trusted actor only" and skip layered defenses. For every admin parameter change that affects user-relevant state, ask: can a user put instructions before and after the admin transaction?
 
+## Step 6b — Same-asset round trip (new in v1.3)
+
+For every two-leg instruction (swap, convert, wrap/unwrap through an extension, migrate, move between two vaults or pools), pass the **same** mint, vault, pool or extension program on both legs. Is there a `from != to` check (`require_keys_neq!`, a constraint, an `if` → `Err`)? If not, trace both legs over one balance: does the second leg read a balance the first leg already moved, are fees, rewards or volume credited for a trade that did not change hands, does a rate get applied to itself? Value credited → a normal finding. Nonsense state or a call that always fails → a correctness finding (`judging.md` Gate 4). Pattern **B17**.
+
 ## Step 7 — Bad symmetry (defensive checks that should not exist)
 
 Redundant or over-restrictive checks:
@@ -93,3 +97,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P9** one code path pins the CPI program, a sibling path does not (Loopscale). - **B8** asymmetric rounding between a to-shares and a from-shares path. - **B12** a Token vs Token-2022 branch that forgets fees/hooks on one side.
 - **New (v1.2):** **L1** an allow-list / program-ID gate present on one instruction and missing on its sibling (GLAM E07). **L10** a token account constrained differently across paired instructions (M0 #6). **B15** a `/// CHECK` deferral that holds on deposit but not withdraw.
+- **New (v1.3):** **B17** same-asset round trip — a two-leg route with no `from != to`.

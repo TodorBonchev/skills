@@ -31,6 +31,8 @@ You are here for the bugs that REQUIRE two or three of these lenses to see at on
 - A rate updated mid-epoch instead of at the epoch boundary — later readers in the same epoch see a different compounded value than earlier readers. Seam: precision × invariant (epoch boundary).
 - An order or strategy accepted now and executed later by a crank — execution uses current values while acceptance assumed the old ones; the collateral check passes at submit and fails at execute. Seam: invariant × execution.
 
+**Float seam (new in v1.3).** Any `f64` / `f32` on a value path is a precision × boundary seam by itself: above 2^53 an `f64` cannot hold every integer, so `floor` / `trunc` / `ceil` of `x * 10^k` become round-to-nearest and the rounding direction the code relies on flips. Find the input size where it flips (amount × scale > 2^53), then the invariant it breaks (shares over-minted, a peg or solvency check passed by one unit). Tie every tolerance in an invariant check to who can trigger the rounding that consumes it — a tolerance an unprivileged caller can consume once per call is a drain, not a safety margin.
+
 ## Discipline
 
 Do NOT report a pure rounding or cast bug — that's the math-precision agent's job. Do NOT report a pure broken invariant — that's the invariant agent's job. Do NOT report a pure edge input on one account or argument — that's the account-validation agent's job. If a finding can be expressed with one lens alone, drop it. Your output is bugs that REQUIRE two or three lenses to articulate.
@@ -51,3 +53,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P4** oracle manipulation feeding a value calc (Mango). **P5** pricing-curve manipulation (Nirvana). **P8** rounding net-positive (SPL token-lending). - **B10** overflow / cast truncation. **B11** stale post-CPI read of `amount`/`supply`.
 - **New (v1.2):** **B16** a payout computed from live state with no `min_out` bound. **L5** silent u64 overflow on a large withdrawal. **L9** precision loss across a multiplier that decides solvency.
+- **New (v1.3):** the float seam (`f64` past 2^53). **B17** a same-asset round trip whose second leg reads a balance the first leg moved.

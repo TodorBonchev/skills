@@ -26,6 +26,8 @@ You are here for the bugs that REQUIRE two or three of these lenses to see at on
 - Fee or reward accrual that credits the "current" holders or receivers, where the set can be changed by an unprivileged actor (anyone can create a position just before the distribution).
 - Rent refunds on close sent to a caller-chosen account instead of the account that paid the rent.
 
+**Privileged actions that hurt without malice (new in v1.3).** The admin-only rule rejects an admin who acts against intent; it does not cover an honest call that cannot be undone or that rewrites value users already accrued (`judging.md` Gate 3, honest-admin hazard). At the access × economics seam, look for a fee, rate, index or mint change applied without first settling the accrual under the old value, and a single-step authority handover. And judge a **stub** by its name: a privileged instruction whose body is only `msg!` / `Ok(())` behind a broken access check carries the impact its name and accounts state (`Stubbed: impact as named.`, -15).
+
 ## Discipline
 
 Do NOT report a missing signer or `has_one` — that's the access-control or account-validation agent's job. Do NOT report a flawed pricing formula in isolation — that's the economic-security agent's job. Do NOT report a missing mirror update — that's the asymmetry agent's job. If a finding can be expressed with one lens alone, drop it. Your output is bugs that REQUIRE two or three lenses to articulate, where the exploit specifically lives at the intersection.
@@ -47,3 +49,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P2** root-of-trust gap (Cashio). **P6** over-powered admin (Raydium). **P7** insufficient admin check (Solend). **P10** governance capture (Synthetify). - **B7** PDA sharing / confused deputy across the access-economics seam.
 - **New (v1.2):** **B14** single-step authority transfer across the access seam. **L3** a bypassable timelock. **L8** a privileged setter missing an admin check.
+- **New (v1.3):** honest-admin hazards (retroactive fee/index/mint changes, irreversible handovers); stubbed privileged instructions judged by named impact.

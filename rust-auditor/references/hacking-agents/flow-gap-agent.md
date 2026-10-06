@@ -31,6 +31,8 @@ You are here for the bugs that REQUIRE two or three of these lenses to see at on
 - A crank, settlement or bridge-message handler iterating over a user-growable list or a combinatorial set; one user pushes the work past the compute limit and blocks delivery for everyone.
 - Instruction introspection used to enforce a flow (a flash-loan repay, an Ed25519 verify): it sees only top-level instructions, so a CPI path skips it, or a check on the index but not the program ID lets an unrelated instruction stand in.
 
+**Same-asset round trip (new in v1.3).** A route whose two legs are separate CPIs (wrap here, unwrap there; swap out of pool A, into pool B) is a flow seam when the caller can name the same asset on both legs: the first CPI moves the balance, the second leg computes from the moved balance or from a cached value that is now stale (B11), and the end state is wrong even though every call succeeded. Check for a `from != to` guard on every such route (**B17**).
+
 ## Discipline
 
 Do NOT report an obviously broken trace — that's the execution-trace agent's job. Do NOT report a known-unsafe CPI or helper pattern — that's the periphery or account-validation agent's job. Do NOT report a feature that fails its stated purpose in a way one specialty would catch — that's the first-principles agent's job. If a finding can be expressed with one lens alone, drop it. Your output is bugs that REQUIRE the combination — usually a control path that crosses an external boundary and ends in a state violating program intent.
@@ -53,3 +55,4 @@ Your bundle carries `solana-exploit-patterns.md`. Read these entries first — t
 
 - **P1** sysvar substitution across the external-program seam (Wormhole). **P9** arbitrary CPI across an integration (Loopscale). - **B5** arbitrary CPI / privilege forwarding. **B11** stale account after CPI across instruction composition.
 - **New (v1.2):** **B15** validation deferred across the program-boundary seam (GLAM E20). **L1** an allow-list skipped on one cross-program path. **L2** a destination account that must resolve to a protocol-controlled address.
+- **New (v1.3):** **B17** same-asset round trip across two CPI legs.
