@@ -1,0 +1,96 @@
+# Shared Scan Rules
+
+## Bundle contents
+
+Your bundle is five concatenated files: all in-scope source code (opening with a **Build context** header and the crate manifests), the SOP (HOW to think), your specialty agent (WHAT to look for), these shared rules (output format, dedup tags), and the report language rules (HOW to word a finding).
+
+Read the whole bundle once at the start. The bundle contains all in-scope source. Use Read/Grep only for cross-file searches or out-of-scope context (`tests/`, client and SDK crates, the IDL, and framework sources under `~/.cargo/registry/src/`) — do not re-read in-scope files for the initial scan.
+
+## Build context — read it first
+
+The top of `source.md` says which framework each crate uses and whether release overflow checks are on. Both change what the code really checks:
+
+- **Framework.** Anchor checks a lot for you — but only for the account types and constraints that are actually written. Native `solana-program` and Pinocchio check **nothing** you do not write by hand: every signer, owner, discriminator, PDA and program ID check is a line of code or it does not exist. Pinocchio also hands out unchecked borrows (`borrow_mut_data_unchecked`, raw pointers) that skip the `RefCell` guard. A repo can mix frameworks; judge each crate by its own manifest.
+- **Framework version.** The manifests carry the exact `anchor-lang` / `solana-program` / `pinocchio` / `spl-token-2022` versions. What `close`, `init_if_needed`, `realloc` and duplicate-account handling do has changed across Anchor releases. When a finding depends on what the framework checks, read that version's source under `~/.cargo/registry/src/` rather than assuming.
+- **Release overflow checks.** `not set` or `OFF` means `+ - *` wrap silently in the deployed program. `on` means they panic. `as` casts truncate and `wrapping_*` wraps either way.
+
+## Out of scope inside in-scope files
+
+`#[cfg(test)]` modules (`mod tests { … }`) and `#[test]` functions are test code. Read them for context — they often show what the developer believed — but never report a bug in them. Code behind a feature flag (`#[cfg(feature = "…")]`) **is** in scope: note which build the bug is in, and flag any check that a feature flag removes from the production build.
+
+## Naming — finding the same instruction under every spelling
+
+One instruction has several names. When you match an instruction across files, check all of them:
+
+- **Anchor:** the `#[program]` module fn `withdraw`, its `#[derive(Accounts)] pub struct Withdraw<'info>`, and its logic, often in `instructions/withdraw.rs` as `pub fn handler(ctx: Context<Withdraw>, …)`, `impl<'info> Withdraw<'info> { fn process(…) }` or `ctx.accounts.withdraw(…)`.
+- **Native / Pinocchio:** the instruction enum variant `Instruction::Withdraw`, the match arm in `process_instruction`, and the handler `process_withdraw` / `withdraw::process`.
+
+## The group key
+
+`group_key` is `Program | function | bug_class`.
+
+- **Program** — the Anchor `#[program]` module name (`vault`), otherwise the program crate directory name (`programs/vault/` → `vault`). For a shared library crate, its crate directory name.
+- **function** — for an instruction handler **or its Accounts struct**, the **instruction name** (`withdraw` — not `handler`, not `Withdraw`). A missing constraint in `struct Withdraw` and a logic bug in the `withdraw` handler share `program | withdraw`. For a native program, the handler fn (`process_withdraw`). For any other code, the fn's own name.
+- **bug_class** — a short kebab-case label that names the defect, not its consequence (`missing-signer-check`, `missing-owner-check`, `non-canonical-bump`, `stale-account-after-cpi`).
+
+The location line in a report reads `program::function`.
+
+## Cross-instruction patterns
+
+When you find a bug in one instruction, **weaponize that pattern across every other instruction and program in the bundle.** Search by account name, by account type and by code pattern. A missing owner check on `config` in `deposit` means you check every instruction that takes `config`; a PDA whose seeds lack the user key in one place means you check every PDA built from the same seeds. Missing a repeat instance is an audit failure.
+
+After scanning: escalate every finding to its worst exploitable variant (an instruction that fails may hide a fund theft, and a fake account that sets one field may set them all). Then revisit every instruction where you found something and attack the other branches and the other accounts.
+
+## The Solana threat model — hold it for every instruction
+
+- **The caller picks every account.** Any account list and any instruction data can be sent by anyone, in any order, as often as they like. The client, the SDK and the frontend are not guards.
+- **Instructions compose.** An attacker puts any instructions — yours, other programs', their own program's — before and after yours in one transaction. Intermediate state between two of your instructions is visible to the instruction in between.
+- **Anyone can send tokens or lamports to any account.** A balance read from a token account or from `lamports()` is not the program's own record.
+- **Accounts die and come back.** A closed account can be funded again in the same transaction, and a PDA address can be created again after close.
+- **The runtime does protect some things.** A program cannot debit or write an account it does not own, a signer must really sign, only the deriving program can sign for its PDA, cross-program reentrancy (A → B → A) is rejected, and a failed instruction rolls back the whole transaction. Do not report what the runtime already prevents.
+
+## Do not report
+
+Admin-only instructions doing admin things. Standard DeFi tradeoffs (MEV, rounding dust, the first-depositor case when the program seeds or locks initial shares). Self-harm-only bugs (the caller passes their own wrong account and loses their own tokens). "The admin or the upgrade authority can take the funds" without a concrete mechanism. Compute-unit micro-optimisations. Bugs only in `#[cfg(test)]` code.
+
+## Output
+
+Return findings as structured blocks:
+
+FINDINGs have concrete, unguarded, exploitable attack paths. LEADs have real code smells with partial paths — default to LEAD over dropping.
+
+**Every FINDING must have a `proof:` field** — concrete values, traces, account lists or state sequences from the actual code. No proof = LEAD, no exceptions.
+
+**One vulnerability per item.** Same root cause = one item. Different fixes needed = separate items.
+
+```
+FINDING | program: name | function: func | bug_class: kebab-tag | group_key: Program | function | bug-class
+path: attacker transaction (accounts passed, instruction data) → instruction → state change → impact
+proof: concrete values/trace demonstrating the bug
+description: one sentence
+fix: one-sentence suggestion
+
+LEAD | program: name | function: func | bug_class: kebab-tag | group_key: Program | function | bug-class
+code_smells: what you found
+description: one sentence explaining trail and what remains unverified
+```
+
+The `group_key` enables deduplication: `Program | function | bug_class`. Agents may add custom fields.
+
+## Language — MANDATORY
+
+**Your `description:` and your `fix:` sentence are written in Simplified Technical English.** The
+rules follow these ones in your bundle, under the heading "Report language". Read them, and
+obey them in every finding and every lead you emit.
+
+Your `description:` is what the report prints. Nothing downstream rewrites it into plain
+English for you — the orchestrator pastes it into the report and the report goes to the
+developer who must fix the code. One sentence, twenty-five words or fewer, active voice, no
+`-ing` clause, no metaphor. Name who acts and what they get.
+
+The rule reaches the wording and never the data. Your `bug_class` label, your `group_key`, the
+program, instruction, account and function names, and every line of code you quote are written
+exactly as the source and the dedup rules require. `report-language.md` says which is which.
+
+Your `path:` and `proof:` fields are working notes, not report text. Keep them concrete;
+concrete is already plain.
