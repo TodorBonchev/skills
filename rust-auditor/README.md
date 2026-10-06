@@ -8,7 +8,9 @@ judge, loop mode and a findings memory - with every agent rewritten for the Sola
 model. Before the agents run, a **pre-scan account map** walks every instruction (accounts and
 their signer/owner/PDA constraints, cross-program calls, state writes) and auto-highlights review
 leads, and each agent carries a catalogue of **real Solana exploit patterns** - Wormhole, Cashio,
-Mango, Nirvana and more - mapped to the bug class it hunts. The agents cover: missing signer and owner checks, account type confusion, PDA seed collisions and
+Mango, Nirvana and more - mapped to the bug class it hunts, plus **lessons distilled from recent
+public audit reports** (GLAM, Indentura, M0, Neodyme's P-Token checklist) and deeper **native /
+Pinocchio manual-validation** coverage for programs that don't use Anchor. The agents cover: missing signer and owner checks, account type confusion, PDA seed collisions and
 non-canonical bumps, arbitrary CPI, stale accounts after CPI, closed-account revival,
 Token-2022 extensions, oracle staleness and integer overflow in release builds.
 
@@ -91,4 +93,5 @@ default is off, so integer overflow wraps in the deployed program).
 - **Target hot programs.** Rather than scanning an entire repo, point the tool at the instruction files you're actively changing - plus `state.rs` and the `lib.rs` that dispatches them. Smaller scope means denser context for each agent and higher-signal findings.
 - **Use loop mode.** LLM output is non-deterministic — each pass can surface different vulnerabilities. Three passes is a good default: the later ones know what the earlier ones found, and you still get a single report.
 - **Read the report file.** Long scans print a short summary in the terminal; every finding and its fix is in `full-report.md`.
+- **Benchmarks.** `rust-auditor/evals/` lists public codebases and audit reports with documented bugs (and an `evals.json` in the repo's eval convention), so runs can be scored for recall and false positives over time.
 - **Ignore `.rust-auditor/` in git.** Every scan writes its run files there, and `--memory` keeps a findings ledger there.
