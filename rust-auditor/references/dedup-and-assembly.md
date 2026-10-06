@@ -78,6 +78,18 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
    - `[agents: 2+]` does NOT override a code path that interrupts attack before harm — demote to LEAD if execution uncertain.
    - No deployer-intent reasoning — what code allows, not how deployer might use it.
 
+**Turn 4 step 3b — Proof-of-concept verification. SKIP entirely unless `--poc` was passed, and run it only on the final pass of the scan** (on a 1-pass scan, that is the only pass). Follow `{resolved_path}/poc-guide.md`. In short:
+
+1. From this pass's gated set, take every **FINDING** the gate scored **High/Critical** (confidence ≥ 90), highest first.
+2. Detect the build toolchain (`cargo-build-sbf`, `anchor`, `rustup`). If it is absent, label every one of those findings **UNVERIFIED** with the reason and **do not install anything** — print the one-line install hint and move on.
+3. For each, within the per-finding and total budget in `poc-guide.md`, build the program in a **scratch copy** of the repo (never the audited tree, never the user's tests) and run one regression test under `.rust-auditor/runs/{stamp}/poc/<finding-id>/` that tries to demonstrate the bug.
+4. Attach the label:
+   - **CONFIRMED** → keep the finding; add `poc=CONFIRMED` to its block marker in step 5a. Confidence is unchanged.
+   - **NOT REPRODUCED** → **rewrite this finding as a `kind=LEAD` block** in step 5a (lead geometry — one line, with the code smell and a note that the PoC was rejected), and tag it `poc=NOT_REPRODUCED`. It leaves the findings list; the developer still sees it under Leads.
+   - **UNVERIFIED** → keep the finding at its gated confidence; add `poc=UNVERIFIED` to its block marker.
+
+The `poc=` attribute is read by `assemble.sh` and printed on the report meta line (`· PoC: CONFIRMED`). It is written **only** under `--poc`; a plain scan writes no `poc=` attribute and the assembler prints no PoC segment. Because PoC can demote a finding to a lead, run it **before** step 4 (memory tag) so the key is tagged and the ledger row is written with the final kind — the merge already handles a kind flip, kind is not part of the key.
+
 4. **Memory tag.** **SKIP this step entirely when memory is off.** It comes before the report, not after it, because the report prints what it decides. It is a **lookup, never a judgment** — no finding is re-argued here, and no verdict from the gate is revisited.
 
    a. **Build the key** for every gated FINDING and every gated LEAD — the three segments of Turn 4's `group_key`, each normalised **on its own** (lower case, every run of non-alphanumeric characters to one hyphen), then joined with `|`: `vault|withdraw|missing-signer-check`. Normalise the segments separately, never the joined string, or the separators become hyphens too.
@@ -153,6 +165,7 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
    - **`conf`** — an integer, on `kind=FINDING` blocks only. **A `kind=LEAD` block carries no `conf` attribute at all** — a lead is not scored, and writing `0` would sort it against real numbers.
    - **`kind`** — `FINDING` or `LEAD`.
    - **`agents`** — carried from `[agents: 8]`. Informational; nothing parses it.
+   - **`poc`** — present **only under `--poc`**, on a block PoC verified: `CONFIRMED`, `UNVERIFIED` (on `kind=FINDING` blocks) or `NOT_REPRODUCED` (on the `kind=LEAD` block a demoted finding became). Omit it entirely on a plain scan and on findings PoC did not reach. The assembler prints it as `· PoC: <label>` on the meta line.
 
    **Write the markers exactly as printed.** They are the only thing standing between a finding and a silent loss: the assembler counts open markers against close markers against readable blocks, and a disagreement becomes a visible `**Run files**` row in the report saying how many findings could not be read. The report may print **less** than the scan found; it may never claim to print **more**. A fudged marker costs a visible warning, not a hidden hole — but it still costs the finding.
 

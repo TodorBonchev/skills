@@ -64,6 +64,29 @@ Start at **100**, deduct: partial attack path **-20**, bounded non-compounding i
 - Two-step authority transfer (propose, then accept by the new authority's signature)
 - Consistent protocol-favoring rounding unless compounding or zero-rounding
 
+## Proof-of-concept verification (`--poc` only)
+
+**Skipped entirely without `--poc`.** When the flag is on, every finding the gate scored
+**High/Critical** (confidence ≥ 90) is verified by building and running one regression test, per
+`poc-guide.md`. The run attaches exactly one label, and the label feeds this file's verdict and
+the report:
+
+- **CONFIRMED** — a test demonstrated the finding's own claim (the attack fired, the harm
+  occurred). Keep the finding; **confidence is unchanged** — a PoC proves reproducibility, it does
+  not raise a number the gate already set, and nothing goes above 100. The test is kept as a
+  regression test for the developer.
+- **NOT REPRODUCED** — a faithful test built and ran and the bug did **not** occur (the guard
+  held, the attack was rejected). Treat this as strong evidence of a false positive and **demote
+  the finding to a LEAD**, with a one-line note of what the test did and what blocked it. Do not
+  delete it silently: a NOT REPRODUCED lead tells the developer the skill checked.
+- **UNVERIFIED** — no faithful test could be built or run inside the budget (missing toolchain,
+  the harness could not model the state, an unrelated build failure, or the budget ran out).
+  **Keep the finding at its gated confidence** — UNVERIFIED means "not checked", never "disproven".
+
+The label never overrides a gate verdict in the other direction: a gate REJECT is already gone
+before PoC runs, and PoC verifies only what survived all four gates. A Medium, a low or a lead is
+never PoC-verified — the budget goes to the findings that matter most.
+
 ## Lead promotion
 
 Before finalizing leads, promote where warranted:

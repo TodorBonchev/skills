@@ -97,7 +97,7 @@ for f in ${runs[@]+"${runs[@]}"}; do
                   n=split(line, a, /[[:space:]]+/)
                   for (i=2; i<=n; i++) { eq=index(a[i],"="); if (substr(a[i],1,eq-1)=="pass") pass=substr(a[i],eq+1) } }
     /^<!--F / {
-      key=""; conf=""; kind=""; agents=""
+      key=""; conf=""; kind=""; agents=""; poc=""
       line = $0
       sub(/[[:space:]]*-->[[:space:]]*$/, "", line)   # terminator off BEFORE splitting
       n = split(line, a, /[[:space:]]+/)
@@ -105,8 +105,10 @@ for f in ${runs[@]+"${runs[@]}"}; do
         eq = index(a[i], "="); nm = substr(a[i], 1, eq-1); v = substr(a[i], eq+1)
         if (nm == "key") key = v; else if (nm == "conf") conf = v
         else if (nm == "kind") kind = v; else if (nm == "agents") agents = v
+        else if (nm == "poc") poc = v
       }
       if (conf == "") conf = "-"        # a LEAD is not scored
+      if (poc == "") poc = "-"          # PoC label, only written under --poc
       start = NR; title = ""; loc = ""; lbody = ""
       next
     }
@@ -133,7 +135,7 @@ for f in ${runs[@]+"${runs[@]}"}; do
       if (title == "") title = "-"
       if (loc   == "") loc   = "-"
       if (lbody == "") lbody = "-"
-      print key "\t" conf "\t" kind "\t" agents "\t" F "\t" pass "\t" start "\t" NR "\t" (start+6) "\t" (NR-1) "\t" title "\t" loc "\t" lbody
+      print key "\t" conf "\t" kind "\t" agents "\t" F "\t" pass "\t" start "\t" NR "\t" (start+6) "\t" (NR-1) "\t" title "\t" loc "\t" lbody "\t" poc
       start = 0; kind = ""
     }
   ' "$f" >> "$work/index.tsv"
@@ -194,8 +196,8 @@ else
 fi
 
 # columns now: 1 k · 2 key · 3 conf · 4 kind · 5 agents · 6 file · 7 pass · 8 start · 9 end
-#              10 bodystart · 11 bodyend · 12 title · 13 loc · 14 leadbody · 15 memtag
-# 12, 13 and 14 are never empty — `-` stands in, because IFS=$'\t' collapses adjacent tabs.
+#              10 bodystart · 11 bodyend · 12 title · 13 loc · 14 leadbody · 15 poc · 16 memtag
+# 12, 13, 14 and 15 are never empty — `-` stands in, because IFS=$'\t' collapses adjacent tabs.
 sort -t $'\t' -k4,4 -k3,3nr -k2,2 "$work/merged.tagged.tsv" > "$work/sorted.tsv"
 awk -F'\t' '$4=="FINDING"' "$work/sorted.tsv" > "$work/findings.tsv"
 awk -F'\t' '$4=="LEAD"'    "$work/sorted.tsv" > "$work/leads.tsv"
@@ -253,7 +255,7 @@ emit_body() {  # file bodystart bodyend  — copied through, never re-worded
 }
 
 i=0
-while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend title loc lbody memtag; do
+while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend title loc lbody poc memtag; do
   i=$((i+1))
   [ "$title" = "-" ] && title="**Title missing** — the block's title line could not be read"
   if [ "$loc" = "-" ]; then meta="**location missing**"; else meta="\`$loc\`"; fi
@@ -262,6 +264,7 @@ while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend t
   meta="$meta · Confidence: $conf"
   [ "$N" -gt 1 ] && meta="$meta · seen in $k/$N runs"
   [ -n "$memtag" ] && meta="$meta · $memtag"
+  [ "$poc" != "-" ] && meta="$meta · PoC: $(printf '%s' "$poc" | tr '_' ' ')"
   say "$meta"
   say ""
   body=$(emit_body "$file" "$bstart" "$bend")
@@ -284,7 +287,7 @@ say ""
 say "| # | Confidence | Title |"
 say "|---|---|---|"
 i=0; sep=0
-while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend title loc lbody memtag; do
+while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend title loc lbody poc memtag; do
   i=$((i+1))
   if [ "$sep" = 0 ] && [ "$conf" -lt "$THRESHOLD" ]; then
     say "| | | **Below Confidence Threshold** |"; sep=1
@@ -299,10 +302,11 @@ say ""
 say "_Vulnerability trails with concrete code smells where the full exploit path could not be completed in one analysis pass. These are not false positives — they are high-signal leads for manual review. Not scored._"
 say ""
 [ "$nlead" = 0 ] && say "_None._"
-while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend title loc lbody memtag; do
+while IFS=$'\t' read -r k key conf kind agents file pass start end bstart bend title loc lbody poc memtag; do
   seg=""
   [ "$N" -gt 1 ] && seg="$seg · seen in $k/$N runs"
   [ -n "$memtag" ] && seg="$seg · $memtag"
+  [ "$poc" != "-" ] && seg="$seg · PoC: $(printf '%s' "$poc" | tr '_' ' ')"
   # The body was parsed out of the lead's own line by the indexer. Do NOT read it back out of
   # the run file here: a lead has no body region, so emit_body returned nothing and every lead
   # got the "Body missing" line whether or not it had one.

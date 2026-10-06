@@ -182,6 +182,16 @@ to a model:
   `| **Mode** | default |` and a space-padded form identically, and the padding above is for
   reading this file. Content and order are the contract; character widths are not.
 
+## Proof-of-concept labels (`--poc` only)
+
+When `--poc` was passed, a finding the verification step reached carries a `PoC:` segment on its
+meta line — `CONFIRMED`, `UNVERIFIED`, or (on a finding demoted to a lead) `NOT REPRODUCED`. The
+assembler reads the `poc=` attribute from the run-file block and prints it last on the meta line,
+after the memory segment. A plain scan writes no `poc=` attribute, so no PoC segment appears — the
+freeze holds. A CONFIRMED label never changes the confidence number; it reports that the bug was
+reproduced, not that it is more severe. `judging.md` and `poc-guide.md` settle the labels; this
+file only settles where the segment prints.
+
 **The threshold is 75**, set in `judging.md` and printed in the Scope row above. It is named
 in `judging.md` and nowhere else; this file reads it from there. A finding at 75 or above gets
 a description and a **Fix** block, one below 75 gets the description only. A promoted lead
@@ -252,8 +262,8 @@ freeze is a property of the assembled file.
 
 The plain report is the shape above with every conditional piece left out: a Scope table of
 exactly three rows (`Mode`, `Files reviewed`, `Confidence threshold (1-100)`), no `Passes`, no
-`Memory`, no `seen in k/N runs`, no `KNOWN` / `NEW` tag, no "Known from earlier scans"
-section. The freeze covers the report's **content and order, not its column padding** and not
+`Memory`, no `seen in k/N runs`, no `KNOWN` / `NEW` tag, no `PoC:` segment, no "Known from earlier
+scans" section. The freeze covers the report's **content and order, not its column padding** and not
 what lands on disk.
 
 The solidity-auditor pins its freeze to a golden plain-path report. This skill has no golden
@@ -274,11 +284,12 @@ extra sections and no dangling `·`, and below the trigger it is the plain repor
 **Segment order on the meta line.** One dot-separated chain, in a fixed order:
 
 ```
-`program_name::function_name` · Confidence: 95 · seen in 2/3 runs · KNOWN (4 scans)
+`program_name::function_name` · Confidence: 95 · seen in 2/3 runs · KNOWN (4 scans) · PoC: CONFIRMED
 ```
 
-location · confidence · runs · memory. **A segment appears only when it carries information** —
-`seen in k/N runs` needs more than one run, `KNOWN (n scans)` / `NEW` needs memory on. So:
+location · confidence · runs · memory · PoC. **A segment appears only when it carries
+information** — `seen in k/N runs` needs more than one run, `KNOWN (n scans)` / `NEW` needs memory
+on, and `PoC: …` needs `--poc` and a finding the verification step reached. So:
 
 | Scan | Meta line |
 |---|---|
