@@ -87,9 +87,9 @@ default is off, so integer overflow wraps in the deployed program). The setting 
 | 5 | invariant | Conservation laws, donation, closed-account revival and re-creation, rent and `realloc` |
 | 6 | periphery | Validation helpers, layouts and deserialisation, `unsafe`, feature-flagged checks, hardcoded IDs |
 | 7 | first-principles | Assumptions with no name - identity, ordering, freshness, existence |
-| 8 | asymmetry | Paired instructions, Accounts-struct constraint diffs, Token vs Token-2022 and SOL vs SPL branches |
+| 8 | asymmetry | Paired instructions, Accounts-struct constraint diffs, Token vs Token-2022 and SOL vs SPL branches, settings fields a setter never writes |
 | 9 | account-validation | Every account of every instruction against eleven questions, every CPI, `remaining_accounts`, instruction data |
-| 10 | numerical-gap | Seams between precision, invariants and edges |
+| 10 | numerical-gap | Seams between precision, invariants and edges, including a fee base that changes on a capped fill |
 | 11 | trust-gap | Seams between access, economics and asymmetry |
 | 12 | flow-gap | Seams between execution, external programs and program intent |
 
@@ -102,6 +102,15 @@ default is off, so integer overflow wraps in the deployed program). The setting 
 - **Ignore `.rust-auditor/` in git.** Every scan writes its run files there, and `--memory` keeps a findings ledger there.
 
 ## Changelog
+
+**1.6** - A correctness or economic candidate is not dropped as "by design" or as self-harm unless
+the source states that intent. Otherwise it is a lead that names the assumption. An outsider who
+makes a privileged or one-shot instruction fail clears Gate 3 (privileged-op griefing). New bug
+class B26: an account another program creates, which an outsider can create first. A fee base must
+match the amount actually applied on every branch, and a phased formula is evaluated at each
+boundary from both sides. A `lamports()` check against a tracked reserve subtracts the rent-exempt
+minimum. A settings setter is diffed field by field against init and against later reads. The
+catalogue is 48 entries.
 
 **1.5** - Dedup compares fixes before it merges two bug-class labels: different fixes stay two
 items. New bug classes B23-B25: a mint closed and re-created after an allow-time extension check, a

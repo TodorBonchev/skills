@@ -238,6 +238,10 @@ generalisation**, and do not add a reference entry that cites a held-out target.
   dedup rule, **B23**–**B25**, the privilege-passthrough access gap, the hardening LEAD checklist,
   the honest-admin recoverability rule and the account map's native / Pinocchio idioms. From 1.5 on
   it is fit, not generalisation.
+- **§10 (`code-423n4/2025-01-pump-science`)** was scored blind on 1.5 (0 of 5 Medium+) and then
+  used to tune 1.6: design-guess demotion, privileged-op griefing (**B26**), fee-base consistency,
+  piecewise continuity, the rent-floor subtraction, and setter completeness. From 1.6 on it is
+  fit, not generalisation.
 
 ## 9. solana-program/escrow — Accretion audit A26SFR3 — `@b27a635`
 
@@ -271,3 +275,23 @@ check out `b27a635` with `git archive` (§0) so the fixes are not in reach. Docu
   zeroed data.
 - **I1** deposit and withdraw do not check the mint's owner explicitly. **I2** the extensions
   account's owner is implied by its PDA, not checked.
+
+## 10. code-423n4/2025-01-pump-science — Code4rena, January 2025 — `@768ef58`
+
+<https://github.com/code-423n4/2025-01-pump-science> · report:
+<https://code4rena.com/reports/2025-01-pump-science>
+
+**Used for tuning from 1.6, so it measures fit, not generalisation.** Version 1.5 was scored on
+this target blind and matched 0 of 5 Medium+ findings. The misses drove the 1.6 judging changes
+(§8). Score later runs on it as **fit**, not generalisation.
+
+Scope is the in-scope Anchor program at
+`768ef58478724bf6b464c9f0952e3e5a3b2a2613`. The report lists 5 unique findings: 2 High, 3 Medium,
+plus 12 Low / Non-Critical. Summarized from the report:
+
+- **H-01** `lock_pool` can be stopped by pre-creating the `lock_escrow` account.
+- **H-02** `update_settings` never writes `migration_token_allocation`, although the input struct
+  carries the field.
+- **M-01** the buy that completes the curve charges the fee on the full input and applies less.
+- **M-02** the curve's SOL-balance check counts the rent-exempt lamports as reserves.
+- **M-03** the fee formula jumps at slot 250 (the linear phase does not land on the next phase).
