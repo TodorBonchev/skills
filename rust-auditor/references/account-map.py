@@ -15,6 +15,21 @@ Anchor (#[derive(Accounts)] + #[program]) is parsed structurally. Native
 solana-program and Pinocchio handlers are parsed heuristically; any cell the
 script cannot settle is written as `?`, and the handler is listed under
 "Needs completion" so a model can finish it from the source.
+
+Global singletons are folded so they do not drown the per-user leads: a writable
+PDA whose seeds are only constants (`[b"config"]`, `[GLOBAL_SEED]`) is raised once
+as `singleton-init` on the instruction that creates it (or once as
+`singleton-write` when nothing in scope creates it), a child PDA keyed only by a
+validated parent (`[b"lp", config.key()]`) or owned by another program
+(`seeds::program`) is not raised, and constant CPI signer seeds are raised once
+per program as `global-signer`. Seeds that carry any variable value keep the
+per-instruction `pda-no-user-key` / `signer-seeds-no-user-key` leads (seeds
+built from a validated parent's key or stored fields are folded into
+`global-signer` too).
+Native/Pinocchio handlers also get `offset-mismatch` (a hand-coded byte range on
+account data that misses every field boundary of the matching `#[repr(C)]` /
+`#[repr(packed)]` struct) and `key-compared-no-signer` (an account's key is
+compared against stored data but `is_signer` is never checked on it).
 """
 import os
 import re
@@ -451,10 +466,11 @@ def expand_seeds(body, seeds, at, depth=3):
     for w in dict.fromkeys(re.findall(r"\b([a-z_]\w*)\b", seeds)):
         if w in ("from", "as_ref", "as_slice", "to_le_bytes", "to_bytes", "key", "mut"):
             continue
-        if USER_NAME.search(w):
-            continue    # keep a name that already says "user key"
         let = resolve_let(body, w, at)
-        if re.search(r"next_account_info|\baccounts\b|ctx\.accounts\.\w+\s*$", let or ""):
+        if USER_NAME.search(w) and not re.search(r"seed", w, re.I) and not re.search(r"\b(Signer|Seed)\s*::|\[\s*Seed\b|^\s*&?\s*\[\s*&?\s*(\w*seed|\[)", let or ""):
+            continue    # keep a name that already says "user key" (but expand `signer = Signer::from(&seeds)`, `signer = &[&seeds[..]]`, `signer_seeds = &[..]`)
+        if re.search(r"next_account_info", let or "") or \
+           re.match(r"^\s*&?\s*(?:mut\s+)?(?:ctx\.accounts\.\w+|self\.\w+|accounts\s*(?:\[|\.\s*(?:get|first|last|iter)\b))(?:\s*\.\s*\w+\s*\([^)]*\))*\s*\??\s*$", let or ""):
             continue    # an account binding, not a seed value
         if let and len(let) < 300 and not re.search(r"\b%s\b" % re.escape(w), let):
             if depth > 1:
@@ -520,7 +536,7 @@ def analyse_body(bodies, fields, native_names=()):
     """Collect CPIs, writes, gates, remaining_accounts from a list of Body."""
     res = {"cpis": [], "writes": [], "gates": [], "remaining": [], "lamports": [],
            "rawwrite": [], "deser": [], "reads_after_cpi": [], "reloads": set(),
-           "init_checks": False, "any_is_signer": False, "derive": []}
+           "init_checks": False, "any_is_signer": False, "derive": [], "slices": []}
     allm = "\n".join(b.m for b in bodies)
     names = set(fields) | set(native_names)
     aliases = {}
@@ -536,6 +552,7 @@ def analyse_body(bodies, fields, native_names=()):
         m, t = b.m, b.text
         # ---- CPIs
         cpi_pos = []
+        cpi_sys = {}     # position -> True when the CPI targets the System program
         for mt in INVOKE.finditer(m):
             if re.search(r"(fn|\.)\s*$", m[max(0, mt.start() - 4):mt.start()]):
                 continue
@@ -547,6 +564,7 @@ def analyse_body(bodies, fields, native_names=()):
             seeds = expand_seeds(b, args[2], mt.start()) if mt.group(1).startswith("invoke_signed") and len(args) > 2 else ""
             res["cpis"].append({"how": "%s(%s)" % (mt.group(1), via), "prog": desc, "ok": ok, "seeds": seeds, "loc": b.loc(mt.start())})
             cpi_pos.append(mt.start())
+            cpi_sys[mt.start()] = bool(re.search(r"system_instruction|system_program", args[0] + " " + desc))
         for mt in CPICTX.finditer(m):
             args, c = orig_args(b, mt.end() - 1)
             if not args:
@@ -566,12 +584,14 @@ def analyse_body(bodies, fields, native_names=()):
                 via = after.group(1) if after else ""
             res["cpis"].append({"how": "CpiContext::%s%s" % (mt.group(1), (" → " + via) if via else ""), "prog": desc, "ok": ok, "seeds": seeds, "loc": b.loc(mt.start())})
             cpi_pos.append(mt.start())
+            cpi_sys[mt.start()] = bool(re.search(r"system_program", pexpr + " " + via))
         for mt in WITH_SIGNER.finditer(m):
             args, c = orig_args(b, mt.end() - 1)
             seeds = expand_seeds(b, args[0], mt.start()) if args else ""
             hm = list(CPI_HELPER.finditer(m[max(0, mt.start() - 200):mt.start()]))
             res["cpis"].append({"how": ".with_signer%s" % ((" → " + hm[-1].group(1)) if hm else ""), "prog": "(program from the CpiContext it signs — see the CpiContext line)", "ok": True, "seeds": seeds, "loc": b.loc(mt.start())})
             cpi_pos.append(mt.start())
+            cpi_sys[mt.start()] = bool(hm and "system_program" in hm[-1].group(1))
         for mt in PINO_CPI.finditer(m):
             # struct-literal CPI: Transfer { .. }.invoke()
             ob = m.rfind("{", 0, mt.start() + 1)
@@ -590,6 +610,7 @@ def analyse_body(bodies, fields, native_names=()):
             seeds = expand_seeds(b, args[0], mt.start()) if args and mt.group(1) == "invoke_signed" else ""
             res["cpis"].append({"how": "%s { .. }.%s()" % (name, mt.group(1)), "prog": "fixed by the CPI crate (`%s`) — confirm the crate pins the program ID" % name, "ok": True, "seeds": seeds, "loc": b.loc(mt.start())})
             cpi_pos.append(mt.start())
+            cpi_sys[mt.start()] = bool(re.search(r"pinocchio_system|system_program|(^|::)(CreateAccount|CreateAccountWithSeed|Allocate|Assign)$", name))
         # ---- writes
         for mt in re.finditer(r"(?:ctx\.accounts\.|self\.)?\b(\w+)((?:\s*\.\s*\w+)+)\s*([+\-*/%|&^]|<<|>>)?=(?!=)", m):
             base = mt.group(1)
@@ -631,8 +652,20 @@ def analyse_body(bodies, fields, native_names=()):
             acct = aliases.get(mt.group(3), mt.group(3))
             if acct in names:
                 res["deser"].append((acct, mt.group(1), mt.group(2), b.loc(mt.start())))
-        for mt in re.finditer(r"\b(\w+)\s*\.\s*(?:try_borrow_data|data\s*\.\s*borrow|try_borrow)\s*\(\s*\)", m):
-            pass
+        # ---- hand-coded byte ranges on borrowed account data (offset-mismatch)
+        for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*(?:unsafe\s*\{\s*)?&?\s*(?:mut\s+)?(?:ctx\.accounts\.|self\.)?(\w+)\s*\.\s*(?:try_borrow_mut_data|try_borrow_data|try_borrow_mut|try_borrow|borrow_mut_data_unchecked|borrow_data_unchecked|borrow_mut_unchecked|borrow_unchecked|data\s*\.\s*borrow_mut|data\s*\.\s*borrow)\s*\(\s*\)", m):
+            var, acct = mt.group(1), aliases.get(mt.group(2), mt.group(2))
+            if acct not in names:
+                continue
+            for sm in re.finditer(r"\b%s\s*\[\s*(\d*)\s*\.\.\s*(=?)\s*(\d*)\s*\]|\b%s\s*\[\s*(\d+)\s*\]" % (re.escape(var), re.escape(var)), m[mt.end():]):
+                if sm.group(4) is not None:
+                    a, e = int(sm.group(4)), int(sm.group(4)) + 1
+                else:
+                    if not sm.group(3):
+                        continue
+                    a = int(sm.group(1) or 0)
+                    e = int(sm.group(3)) + (1 if sm.group(2) else 0)
+                res["slices"].append((acct, var, a, e, b.loc(mt.end() + sm.start())))
         # ---- PDA derivations
         for mt in re.finditer(r"\b(find_program_address|create_program_address|derive_address)\s*\(", m):
             args, c = orig_args(b, mt.end() - 1)
@@ -659,8 +692,13 @@ def analyse_body(bodies, fields, native_names=()):
                 acct = mt.group(1)
                 f = fields.get(acct)
                 rd = first + mt.start()
-                touched = any(re.search(r"\b%s\b" % re.escape(acct), m[max(0, p - 500):min(rd, p + 300)]) for p in cpi_pos if p < rd)
-                if f is not None and f.kind in ("Account", "InterfaceAccount", "AccountLoader") and touched:
+                touching = [p for p in cpi_pos if p < rd and re.search(r"\b%s\b" % re.escape(acct), m[max(0, p - 500):min(rd, p + 300)])]
+                # `lamports()` reads the live AccountInfo (never stale); a System-program
+                # CPI (transfer / create / allocate) cannot change a program-owned
+                # account's data, so it cannot leave a deserialized field stale.
+                if mt.group(2).startswith("lamports") or all(cpi_sys.get(p) for p in touching):
+                    continue
+                if f is not None and f.kind in ("Account", "InterfaceAccount", "AccountLoader") and touching:
                     res["reads_after_cpi"].append((acct, re.sub(r"\s+", "", mt.group(2)), b.loc(rd)))
     return res
 
@@ -741,8 +779,8 @@ def native_handlers(srcs, anchor_struct_names):
                     nm = nm.strip().lstrip("&").replace("ref ", "").replace("mut ", "").strip()
                     if re.match(r"^\w+$", nm):
                         accts.append(NAcct(nm, "slice pattern", mt.start()))
-            for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*&?\s*accounts\s*(?:\[\s*(\d+)\s*\]|\.get\s*\(\s*(\d+)\s*\))", body.m):
-                accts.append(NAcct(mt.group(1), "accounts[%s]" % (mt.group(2) or mt.group(3)), mt.start()))
+            for mt in re.finditer(r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*&?\s*accounts\s*(?:\[\s*(\d+)\s*\]|\.get\s*\(\s*(\d+)\s*\)|\.(first)\s*\(\s*\))", body.m):
+                accts.append(NAcct(mt.group(1), "accounts[%s]" % (mt.group(2) or mt.group(3) or "0"), mt.start()))
             dispatch = re.findall(r"\b(\w+)\s*\(\s*(?:program_id\s*,\s*)?&?\s*(?:mut\s+)?accounts\b", body.m)
             dispatch = [d for d in dispatch if d not in ("next_account_info", "iter", "len", "get", "Ok", "Some")]
             if not accts and dispatch:
@@ -769,9 +807,10 @@ def native_account_rows(h, res):
         signer = "checked" if re.search(r"\b%s\s*\.\s*is_signer\b" % n, m) else "—"
         writable = "checked" if re.search(r"\b%s\s*\.\s*is_writable\b" % n, m) else ""
         owner = "checked" if (re.search(r"\b%s\s*\.\s*owner\b" % n, m) or re.search(r"(owned_by|is_owned_by|check_owner|assert_owner\w*)\s*\([^;]*\b%s\b" % n, m) or re.search(r"\b%s\s*\.\s*(is_owned_by|owned_by)\s*\(" % n, m)) else "—"
-        key = bool(re.search(r"\b%s\s*\.\s*(key|address)\s*(\(\s*\))?\s*(!=|==)" % n, m) or
-                   re.search(r"(!=|==)\s*&?\*?\s*%s\s*\.\s*(key|address)\b" % n, m) or
-                   re.search(r"check_id\s*\(\s*&?\*?\s*%s\b" % n, m))
+        KREF = r"\b%s\s*\.\s*(?:key|address)\s*(?:\(\s*\))?(?:\s*\.\s*(?:as_ref|as_array|to_bytes)\s*\(\s*\))?" % n
+        partners = [x.strip() for x in re.findall(KREF + r"\s*(?:!=|==)\s*([^{};|&]+)", m)] + \
+                   [x.strip() for x in re.findall(r"([\w.\[\]()&*:]+(?:\s*\.\s*\w+\s*\(\s*\))*)\s*(?:!=|==)\s*&?\*?\s*" + KREF[2:], m)]
+        key = bool(partners or re.search(r"check_id\s*\(\s*&?\*?\s*%s\b" % n, m))
         ty = ""
         for acct, t, how, loc in res["deser"]:
             if acct == a.name:
@@ -791,7 +830,7 @@ def native_account_rows(h, res):
             unresolved.append(a.name)
         rows.append({"name": a.name, "how": a.how, "signer": signer, "mut": ("written" if written else "") + ((" · is_writable " + writable) if writable else ""),
                      "owner": owner, "key": "key compared" if key else "—", "type": ty or ("?" if used else "unused"),
-                     "seeds": seeds, "bump": bump, "written": written, "used": used})
+                     "seeds": seeds, "bump": bump, "written": written, "used": used, "partners": partners})
     return rows, sorted(set(unresolved))
 
 
@@ -809,12 +848,105 @@ def bump_source(d, h):
 
 
 # --------------------------------------------------------------------------
+# #[repr(C)] / #[repr(packed)] layouts (offset-mismatch)
+# --------------------------------------------------------------------------
+
+LAYOUTS = {}     # (crate, Name) -> {"repr", "fields": [(name, start, end)], "size"} or None
+CONSTS = {}
+PRIM = {"u8": 1, "i8": 1, "bool": 1, "u16": 2, "i16": 2, "u32": 4, "i32": 4, "f32": 4, "u64": 8, "i64": 8, "f64": 8,
+        "u128": 16, "i128": 16, "Pubkey": 32, "Address": 32}
+
+
+def collect_layouts(srcs):
+    raw = {}
+    for s in srcs:
+        for mt in re.finditer(r"\bconst\s+([A-Z_][A-Z0-9_]*)\s*:\s*usize\s*=\s*(\d+)\s*;", s.m):
+            CONSTS[mt.group(1)] = int(mt.group(2))
+        for mt in re.finditer(r"#\s*\[\s*repr\s*\(([^)]*)\)\s*\]((?:\s*#\s*\[[^\]]*\])*)\s*(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+(\w+)\s*\{", s.m):
+            reprs = mt.group(1).replace(" ", "")
+            if not re.search(r"(^|,)(C|packed|transparent)(,|$)", reprs):
+                continue
+            ob = mt.end() - 1
+            cb = match_close(s.m, ob)
+            raw[(s.crate, mt.group(3))] = ("packed" if "packed" in reprs else "C", s.m[ob + 1:cb])
+    def size_align(crate, ty, depth=0):
+        ty = re.sub(r"\s+", "", ty).split("::")[-1]
+        if ty in PRIM:
+            return PRIM[ty], (1 if ty in ("Pubkey", "Address") else PRIM[ty])
+        am = re.match(r"^\[(.+);(\w+)\]$", ty)
+        if am:
+            n = int(am.group(2)) if am.group(2).isdigit() else CONSTS.get(am.group(2))
+            inner = size_align(crate, am.group(1), depth + 1)
+            if n is None or inner is None:
+                return None
+            return inner[0] * n, inner[1]
+        if (crate, ty) in raw and depth < 4:
+            lay = layout_of(crate, ty, depth + 1)
+            return (lay["size"], lay["align"]) if lay else None
+        return None
+    def layout_of(crate, name, depth=0):
+        if (crate, name) in LAYOUTS:
+            return LAYOUTS[(crate, name)]
+        repr_, body = raw[(crate, name)]
+        off, fields, maxal = 0, [], 1
+        for part in split_top(body, angle=True):
+            fm = re.match(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(\w+)\s*:\s*(.+?)\s*$", part, re.S)
+            if not fm:
+                continue
+            sa = size_align(crate, fm.group(2), depth)
+            if sa is None:
+                LAYOUTS[(crate, name)] = None
+                return None
+            sz, al = sa
+            if repr_ == "packed":
+                al = 1
+            off = (off + al - 1) // al * al
+            fields.append((fm.group(1), off, off + sz))
+            off += sz
+            maxal = max(maxal, al)
+        size = (off + maxal - 1) // maxal * maxal
+        LAYOUTS[(crate, name)] = {"repr": repr_, "fields": fields, "size": size, "align": maxal} if fields else None
+        return LAYOUTS[(crate, name)]
+    for crate, name in raw:
+        layout_of(crate, name)
+
+
+def _stem(name):
+    s = re.sub(r"(_account|_acct|_acc|_info|_data|_state|_pda|_view)$", "", name.lower())
+    return s.replace("_", "")
+
+
+def offset_mismatch(crate, acct, a, e):
+    """Describe the struct the byte range [a, e) misses, or '' when it lines up
+    (or no layout can be matched to the account)."""
+    lays = {n: l for (c, n), l in LAYOUTS.items() if c == crate and l}
+    if not lays:
+        return ""
+    named = [n for n in lays if n.lower() == _stem(acct)]
+    if named:
+        cands = named
+    elif len(lays) == 1:
+        cands = list(lays)
+    else:
+        return ""    # cannot tell which struct this account holds
+    for n in cands:
+        l = lays[n]
+        starts = {f[1] for f in l["fields"]}
+        ends = {f[2] for f in l["fields"]}
+        if a in starts and (e in ends or (e == a + 1 and any(f[1] == a for f in l["fields"]))) and e <= l["size"]:
+            return ""
+    l = lays[cands[0]]
+    return "`%s` (#[repr(%s)], %d bytes: %s)" % (cands[0], l["repr"], l["size"], ", ".join("%s@%d..%d" % f for f in l["fields"][:8]))
+
+
+# --------------------------------------------------------------------------
 # Red flags
 # --------------------------------------------------------------------------
 
 def seeds_have_user(seeds, fields, extra_user=()):
     if not seeds:
         return True
+    seeds = re.sub(r'b?r?(#*)"(?:[^"\\]|\\.)*"\1', " ", seeds)    # a literal `b"user"` is not a user key
     for mt in re.finditer(r"\b(\w+)\b", seeds):
         w = mt.group(1)
         f = fields.get(w)
@@ -827,6 +959,37 @@ def seeds_have_user(seeds, fields, extra_user=()):
         if USER_NAME.search(w):
             return True
     return False
+
+
+SEED_NOISE = {"from", "as_ref", "as_slice", "as_bytes", "to_le_bytes", "to_be_bytes", "to_bytes", "to_vec", "key",
+              "mut", "ref", "ctx", "accounts", "self", "crate", "address", "as_array", "to_account_info", "u8"}
+
+
+def seed_kind(seeds, fields):
+    """'const' when every seed value is a literal / CONSTANT / stored bump (one
+    address for the whole program), 'parent' when the only non-constant values
+    are the key or a stored field of another seeds- or address-validated account
+    (one per parent), else 'var'."""
+    s = re.sub(r'b?r?(#*)"(?:[^"\\]|\\.)*"\1', " ", seeds)
+    s = re.sub(r"\b(?:[a-z_]\w*\s*::\s*)*id\s*\(\s*\)", " ID ", s)            # crate::id() / program id()
+    s = re.sub(r"\b[a-z_]\w*\s*::\s*", "", s)                          # lowercase path prefixes
+    s = re.sub(r"\b(?:ctx\s*\.\s*accounts|self)\s*\.\s*", "", s)
+    kind = "const"
+    for mt in re.finditer(r"(?<![\w.])[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*", s):
+        segs = [x for x in re.split(r"\s*\.\s*", mt.group(0)) if x not in SEED_NOISE]
+        if not segs:
+            continue
+        head = segs[0]
+        if head[:1].isupper():
+            continue                                    # CONSTANT, Type::from, crate::ID
+        if re.search(r"bump|nonce", segs[-1]) or head == "bumps":
+            continue                                    # bump byte: not an identity
+        f = fields.get(head)
+        if f is not None and (f.seeds() or f.val("address")):
+            kind = "parent"     # `config.key()` or a stored field of a validated `config`
+            continue
+        return "var"
+    return kind
 
 
 def st_has_one(fields):
@@ -889,7 +1052,13 @@ def anchor_flags(inst, st, res):
             fl.append((key, "sysvar-unchecked", "`%s` looks like a sysvar but is a raw `%s` with no `address = ` — use `Sysvar<'info, T>` or pin the ID" % (f.name, f.kind), inst))
         sd = f.seeds()
         if sd and (f.is_mut) and not seeds_have_user(sd, fields):
-            fl.append((key, "pda-no-user-key", "`%s` is a writable PDA whose seeds `%s` name no signer or user key — fine for a global singleton, a bug when it holds per-user state" % (f.name, squash(sd, 60)), inst))
+            sk = seed_kind(sd, fields)
+            if sk == "var":
+                fl.append((key, "pda-no-user-key", "`%s` is a writable PDA whose seeds `%s` name no signer or user key — fine for a global singleton, a bug when it holds per-user state" % (f.name, squash(sd, 60)), inst))
+            elif sk == "const" and not f.val("seeds::program"):
+                # folded per program in fold_singletons(); a foreign PDA (seeds::program)
+                # or a child keyed only by a validated parent is not raised
+                fl.append((key, "_singleton", {"field": f.name, "seeds": sd, "init": bool(f.keys & {"init", "init_if_needed"})}, inst))
         bump = [v for v in f.val("bump") if v]
         if bump and (bump[0] in st["ix_args"] or bump[0] in inst["args"]):
             fl.append((key, "user-bump", "`%s` takes `bump = %s` from instruction data — a non-canonical bump gives a second valid address" % (f.name, bump[0]), inst))
@@ -926,7 +1095,9 @@ def common_flags(fl, key, inst, res, fields, native_names=()):
         if c["ok"] is False:
             fl.append((key, "arbitrary-cpi", "%s calls program %s (%s)" % (c["how"], c["prog"], c["loc"]), inst))
         if c["seeds"]:
-            if not seeds_have_user(c["seeds"], fields):
+            if not seeds_have_user(c["seeds"], fields) and seed_kind(c["seeds"], fields) in ("const", "parent"):
+                fl.append((key, "_global-signer", {"seeds": c["seeds"], "loc": c["loc"], "kind": seed_kind(c["seeds"], fields)}, inst))
+            elif not seeds_have_user(c["seeds"], fields):
                 fl.append((key, "signer-seeds-no-user-key", "CPI signs with seeds `%s` that name no signer or user key — any two callers that share these seed values share the authority (%s)" % (squash(c["seeds"], 70), c["loc"]), inst))
         if c["seeds"] and re.search(r"\b(bump|nonce)\b", c["seeds"]) and not re.search(r"\.\s*(bump|nonce)\w*\b|bumps\s*\.", c["seeds"]):
             body = inst["bodies"][0]
@@ -959,11 +1130,38 @@ def common_flags(fl, key, inst, res, fields, native_names=()):
         if raw and how in ("try_from_slice", "deserialize", "unpack_unchecked", "from_bytes", "try_from_bytes", "load_unchecked", "try_deserialize_unchecked") and \
            not re.search(r"discrimin|DISCRIMINATOR|account_type|AccountType|\bkind\b|\btag\b|\bkey\s*!=\s*\w+::|Key::", body_all):
             fl.append((key, "type-cosplay", "`%s` is decoded as `%s` by `%s` with no discriminator or type-tag check — another account type with the same layout passes (%s)" % (acct, ty, how, loc), inst))
+    if native_names:
+        seen_off = set()
+        for acct, var, a, e, loc in res["slices"]:
+            hit = offset_mismatch(inst["src"].crate, acct, a, e)
+            if hit and (acct, a, e) not in seen_off:
+                seen_off.add((acct, a, e))
+                fl.append((key, "offset-mismatch", "`%s[%s]` (data of `%s`) does not line up with %s — a hand offset that misses the layout reads the wrong bytes: check whether a check built on it can never pass (the instruction always fails) or compares attacker-chosen bytes (%s)" % (var, ("%d" % a) if e == a + 1 else ("%d..%d" % (a, e)), acct, hit, loc), inst))
     if res["rawwrite"] and not res["init_checks"] and re.search(r"init|create|setup|register|open|^new", inst["name"], re.I):
         for acct, loc in res["rawwrite"][:1]:
             f = fields.get(acct)
             if f is None or f.is_raw:
                 fl.append((key, "reinit", "raw data of `%s` is written with no is-initialized / discriminator check in the handler — a second call may overwrite live state (%s)" % (acct, loc), inst))
+
+
+def partner_is_stored(expr, h, rows):
+    """True when the other side of a key comparison reads account data: a slice /
+    field / getter of state, or a `let` bound to one — not a constant, a program
+    ID, another account's key, or a derived address."""
+    e = re.sub(r"^[&*\s]+|\s+$", "", expr)
+    if not e or re.search(r"(^|::)[A-Z][A-Z0-9_]+\b|::ID\b|\bid\s*\(\s*\)|program_id|crate::", e):
+        return False
+    acct_names = {r["name"] for r in rows}
+    head = re.match(r"(\w+)", e)
+    if head and head.group(1) in acct_names and re.search(r"^\w+\s*\.\s*(key|address)\b", e):
+        return False
+    m = h["bodies"][0].m
+    if re.match(r"^\w+$", e):
+        let = resolve_let(h["bodies"][0], e, len(m))
+        if not let or re.search(r"find_program_address|create_program_address|derive_address|get_associated_token_address|\.\s*(key|address)\s*\(", let):
+            return False
+        return bool(re.search(r"\[|\.\s*\w+\s*\(\s*\)|\.\s*[a-z_]\w*\b", let))
+    return bool(re.search(r"\[|\.\s*[a-z_]\w*", e))
 
 
 def native_flags(h, rows, res):
@@ -980,11 +1178,47 @@ def native_flags(h, rows, res):
             fl.append((key, "raw-deserialize", "`%s` is decoded as `%s` with no owner check and no key check — a look-alike account decodes the same" % (r["name"], r["type"]), h))
         if r["written"] and r["owner"] == "—" and r["key"] == "—" and not r["seeds"] and r["name"] not in ("payer", "fee_payer"):
             fl.append((key, "write-unbound", "`%s` is written with no owner, key or PDA check — the runtime only blocks writes to accounts this program does not own, so any account it does own (another user's, another type) can be passed here" % r["name"], h))
+        if r["signer"] == "—" and r["used"] and not r["seeds"] and not AUTH_NAME.search(r["name"]) and \
+           not r["name"].endswith("_program") and not SYSVAR_NAME.match(r["name"]):
+            data_partners = [x for x in r.get("partners", []) if partner_is_stored(x, h, rows)]
+            if data_partners:
+                fl.append((key, "key-compared-no-signer", "`%s`'s key is compared against stored data (`%s`), but `is_signer` is never checked on it here — if that comparison is what authorizes the caller, anyone who passes the stored key passes the check" % (r["name"], squash(data_partners[0], 50)), h))
         if SYSVAR_NAME.match(r["name"]) and r["key"] == "—" and r["used"] and r["type"] in ("?", ""):
             fl.append((key, "sysvar-unchecked", "`%s` looks like a sysvar; no address check is visible — `Sysvar::from_account_info` checks it, a hand decode does not" % r["name"], h))
     fake_fields = {}
     common_flags(fl, key, h, res, fake_fields, tuple(names))
     return fl
+
+
+def fold_singletons(flags):
+    """Replace per-instruction `_singleton` / `_global-signer` markers with one
+    lead per (program, seeds)."""
+    out, groups = [], {}
+    for f in flags:
+        if f[1] in ("_singleton", "_global-signer"):
+            prog = f[0].split("::", 1)[0]
+            groups.setdefault((f[1], prog, re.sub(r"\s+", "", f[2]["seeds"])), []).append(f)
+        else:
+            out.append(f)
+    for (typ, prog, _sd), items in groups.items():
+        items = sorted(items, key=lambda x: x[0])
+        insts = list(dict.fromkeys(k.split("::", 1)[1] for k, _t, _p, _i in items))
+        sd = squash(items[0][2]["seeds"], 60)
+        if typ == "_global-signer":
+            out.append((items[0][0], "global-signer", "CPIs sign as %s (seeds `%s`) at %d site(s) in %d instruction(s): %s — every caller who reaches one of these CPIs acts with that PDA's authority; confirm each path is gated and every account it passes is pinned" % (
+                "a program-wide PDA" if items[0][2].get("kind") == "const" else "a PDA keyed only by a validated parent account", sd, len(items), len(insts), ", ".join("`%s` (%s)" % (k.split("::", 1)[1], p["loc"]) for k, _t, p, _i in items[:6]) + (" …" if len(items) > 6 else ""), ), items[0][3]))
+            continue
+        field = items[0][2]["field"]
+        inits = [it for it in items if it[2]["init"]]
+        for it in inits:
+            name = it[0].split("::", 1)[1]
+            others = [i for i in insts if i != name]
+            out.append((it[0], "singleton-init", "`%s` (seeds `%s`) is a global singleton created here — check who may call this first (front-run / first-caller-wins) and that it never holds per-user state%s" % (
+                it[2]["field"], sd, ("; also written by " + ", ".join("`%s`" % o for o in others[:8]) + (" …" if len(others) > 8 else "")) if others else ""), it[3]))
+        if not inits:
+            out.append((items[0][0], "singleton-write", "`%s` (seeds `%s`) is a global singleton written by %d instruction(s) (%s) and created outside the scanned files — confirm it never holds per-user state" % (
+                field, sd, len(insts), ", ".join("`%s`" % i for i in insts[:8]) + (" …" if len(insts) > 8 else "")), items[0][3]))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1004,9 +1238,9 @@ def render(srcs, entries, flags, dispatchers, needs):
     if not flags:
         out.append("_None raised by the script. That is not a clean bill: the script cannot see logic bugs._\n")
     else:
-        order = ["no-signer", "authority-not-signer", "arbitrary-cpi", "check-deferred", "unchecked-account", "raw-deserialize", "write-unbound", "sysvar-unchecked",
-                 "user-bump", "pda-no-user-key", "signer-seeds-no-user-key", "duplicate-mutable", "manual-close", "reinit",
-                 "init-if-needed", "type-cosplay", "remaining-accounts", "stale-after-cpi", "check-comment-only", "raw-checked-in-code"]
+        order = ["no-signer", "authority-not-signer", "key-compared-no-signer", "arbitrary-cpi", "check-deferred", "unchecked-account", "raw-deserialize", "write-unbound", "sysvar-unchecked",
+                 "offset-mismatch", "user-bump", "pda-no-user-key", "signer-seeds-no-user-key", "singleton-init", "global-signer", "duplicate-mutable", "manual-close", "reinit",
+                 "init-if-needed", "type-cosplay", "remaining-accounts", "stale-after-cpi", "check-comment-only", "raw-checked-in-code", "singleton-write"]
         flags = sorted(flags, key=lambda x: (order.index(x[1]) if x[1] in order else 99, x[0]))
         out.append("| # | Where | Flag | Detail |\n| --- | --- | --- | --- |")
         for i, (k, tag, msg, inst) in enumerate(flags, 1):
@@ -1125,6 +1359,7 @@ def main(argv):
     srcs = [Src(f) for f in files]
     for s_ in srcs:
         LOCAL_FNS.update(mt.group(1) for mt in FN_RE.finditer(s_.m))
+    collect_layouts(srcs)
     structs = {}
     for s in srcs:
         structs.update(parse_accounts_structs(s))
@@ -1155,6 +1390,7 @@ def main(argv):
             needs.append((key, "accounts read by index — confirm the index → role mapping"))
         flags.extend(native_flags(h, rows, res))
         entries.append({"framework": h["framework"], "md": render_native(h, rows, res, unresolved)})
+    flags = fold_singletons(flags)
     # de-duplicate identical flags
     seen, uniq = set(), []
     for f in flags:
