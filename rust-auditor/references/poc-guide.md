@@ -64,6 +64,24 @@ Pick the lightest harness that can model the bug:
 Prefer LiteSVM unless there is a concrete reason it cannot express the attack. Quote the reason in
 the UNVERIFIED/CONFIRMED note when you fall back.
 
+## Fuzzing as a PoC (optional, for invariant / economic findings)
+
+Most findings are proved by a single crafted transaction (LiteSVM/Mollusk above). A few — a
+conservation or solvency invariant, a rounding leak that only shows over many operations (B8, B16,
+L4, L9) — are better demonstrated by a **fuzzer** that drives random operation sequences and asserts
+the invariant. **Trident** (Anchor fuzzing) is the native fit: a fuzz target declares the
+instruction mix and an invariant check, and a failing case is a concrete PoC sequence. Use it only
+when a single-transaction PoC cannot express the bug, and keep it inside the same budget — a fuzz
+campaign must be time-boxed (a short run, not an open-ended one) or the finding stays `UNVERIFIED`
+with "needs a longer fuzz campaign than the PoC budget allows". The fuzz target lives under the runs
+`poc/` dir like any other harness; it never edits the repo.
+
+> A worked reference for both harnesses is the public **Ubuntu-Technologies/solana-security-template**
+> repo: every module ships a vulnerable and a secure program with **LiteSVM** tests that show the
+> exploit passing against the vulnerable build and failing against the fixed one, and its AMM module
+> adds a **Trident** fuzz setup. That vulnerable-passes / fixed-fails shape is exactly the
+> CONFIRMED-vs-NOT-REPRODUCED contrast this step encodes.
+
 ## Building the program
 
 The PoC needs the compiled program as an `.so`:
