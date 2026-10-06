@@ -78,6 +78,17 @@ For every two-leg instruction (swap, convert, wrap/unwrap through an extension, 
 
 When a program calls out on both sides of a pair — a pre- and a post-hook, a before- and after-callback, a deposit event and a withdraw event — list the accounts and data each side passes. A side that leaves out the record it acts on (the position, the order, the deposit record), the amount, or the user that the other side passes gives the external program or the indexer less than it needs to enforce or reconstruct the same rule: the hook cannot check on withdraw what it checked on deposit. Report the missing context as a LEAD, or as a finding when a hook-enforced rule can be skipped on the poorer side.
 
+## Step 6d — Setter completeness
+
+For every configuration, params or settings struct, and for every input struct a setter takes:
+
+1. List every field of the stored struct, and every field of the input struct.
+2. List every assignment on the init path and on each update path (`field =`, `field = input.field`).
+3. Diff the lists. A field the input struct carries and the setter never assigns is a bug: the admin sets it and nothing changes. A field that later logic reads and that no path ever writes (it stays zero or default) is the same bug.
+4. A field init writes, which later economic or lifecycle logic reads (a fee, a cap, a supply, an allocation, a collateral ratio), and which no update path writes, is a bug when the update path writes the sibling fields of the same kind from the same input struct, or when the init and update inputs share that field. Identity fields that are fixed on purpose — keys, bumps, mints, an authority with its own transfer instruction — are not this check.
+
+Emit a FINDING when the omitted field feeds that logic and step 3 proves it, or step 4 shows the update path skipping one field of a set it otherwise writes. Use the correctness lane when the defect is the missing assignment, and the four gates when the stuck value pays a caller or strands funds (`judging.md` Gate 4). Otherwise emit a LEAD. The `proof:` shows the input fields, the assignments and the diff. Do not drop the diff as intended unless a doc comment, a named constant or a spec line says the field is fixed (`shared-rules.md`).
+
 ## Step 7 — Bad symmetry (defensive checks that should not exist)
 
 Redundant or over-restrictive checks:

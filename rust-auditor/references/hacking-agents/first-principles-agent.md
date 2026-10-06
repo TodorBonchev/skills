@@ -10,7 +10,7 @@ Other agents scan for account validation, arithmetic, access control, economics,
 
 For every state-changing instruction:
 
-1. **Extract every assumption.** Values (the balance is current, the price is fresh, the account data was not changed by the CPI just made), ordering (instruction A ran before B, and only once), identity (this account is the one we think — this key, this owner, this type, this user's), arithmetic (fits in the type, nonzero denominator), state (the account exists, is initialised, is not closed, is not the same account as another parameter, a flag was set).
+1. **Extract every assumption.** Values (the balance is current, the price is fresh, the account data was not changed by the CPI just made), ordering (instruction A ran before B, and only once), identity (this account is the one we think — this key, this owner, this type, this user's), arithmetic (fits in the type, nonzero denominator, a literal `10^6` or `10^9` scale when a mint or a config field stores the decimals, a literal that equals a formula only while a configurable field still has its default — `numerical-gap-agent.md`), state (the account exists, is initialised, is not closed, is not the same account as another parameter, a flag was set).
 
 2. **Violate it.** Find who controls the inputs — on Solana that is the instruction data **and every account in the list**. Construct transactions, and sequences of instructions inside one transaction, that reach the instruction with the assumption broken.
 
