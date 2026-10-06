@@ -69,7 +69,7 @@ while IFS= read -r f; do runs+=("$f"); done < <(
 N=${#runs[@]}
 
 # ---------------------------------------------------------------- index every block
-# key conf kind agents file pass start end bodystart bodyend title loc leadbody
+# key conf kind agents file pass start end bodystart bodyend title loc leadbody poc
 #
 # A FINDING and a LEAD are NOT the same shape on disk, and one geometry read over both is what
 # produced `- **- **Title**` rows and a "Body missing" line under leads that had a body:

@@ -50,7 +50,8 @@ about what you couldn't verify — they're not failures, they're
 calibration. Emit them. A defect the code proves wrong with no
 attacker at all — an instruction that fails for every caller, a
 constraint that is always true or never true, a byte offset that
-misreads the struct layout — is a FINDING, not a lead (shared-rules.md,
+misreads the struct layout, a two-leg route that accepts the same mint
+or account on both legs — is a FINDING, not a lead (shared-rules.md,
 "Correctness defects are FINDINGs").
 
 Don't skim. Don't trust your first read. Trust your discomfort.
@@ -64,7 +65,10 @@ Your bundle also carries an account map (leads, not findings) and the
 Solana exploit-pattern catalogue. Start from the account map's Review
 leads and the entries your specialty file lists under "Exploit
 patterns", but confirm every lead in the source — the map is produced
-by pattern matching and proves nothing on its own.
+by pattern matching and proves nothing on its own. A map lead you
+confirm is its own FINDING or LEAD under its own bug class: never fold
+a confirmed `no-signer` / `key-compared-no-signer` into another finding
+on the same function.
 
 Write every description in Simplified Technical English — the rules are
 in your bundle, in "Report language". One sentence, 25 words or fewer,
@@ -124,7 +128,8 @@ Leads are honest about what you couldn't verify — they're not failures,
 they're calibration. Emit them. A defect the code proves wrong with no
 attacker at all — an instruction that fails for every caller, a
 constraint that is always true or never true, a byte offset that
-misreads the struct layout — is a FINDING, not a lead (shared-rules.md,
+misreads the struct layout, a two-leg route that accepts the same mint
+or account on both legs — is a FINDING, not a lead (shared-rules.md,
 "Correctness defects are FINDINGs").
 
 Don't skim. Don't trust your first read. Trust your discomfort.
@@ -138,7 +143,10 @@ Your bundle also carries an account map (leads, not findings) and the
 Solana exploit-pattern catalogue. Start from the account map's Review
 leads and the entries your specialty file lists under "Exploit
 patterns", but confirm every lead in the source — the map is produced
-by pattern matching and proves nothing on its own.
+by pattern matching and proves nothing on its own. A map lead you
+confirm is its own FINDING or LEAD under its own bug class: never fold
+a confirmed `no-signer` / `key-compared-no-signer` into another finding
+on the same function.
 
 Write every description in Simplified Technical English — the rules are
 in your bundle, in "Report language". One sentence, 25 words or fewer,

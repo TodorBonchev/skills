@@ -67,6 +67,8 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
 
    **MANDATORY — Completeness (HARD GATE).** Before print: list every unique (Program, function, bug-class) in any raw FINDING/LEAD across the 12 agents. Every unique (Program, function) MUST have ≥1 item in final. Zero = silent drop, fix it. Multiple bug-class within same (Program, function) MAY collapse to one item (wide-description), but the (Program, function) MUST survive. Print inline before report: `Completeness: N unique (Program, function) in raw, N covered in final.`
 
+   **Signer leads from the account map are checked the same way.** Every `no-signer`, `authority-not-signer` and `key-compared-no-signer` row in `account-map.md` must end in a final item under a signer bug class on that (Program, function), or in one line `map lead rejected: <program::function> <flag> — <reason from the source>` printed with the Completeness line. A signer lead folded into another bug class on the same function is a silent drop. Print `Map signer leads: N raised, N covered, N rejected.`
+
    Composite chains: if A's output feeds B's precondition AND combined impact > either alone, add `Chain: [A] + [B]` at conf = min(A, B). Most audits: 0–2.
 
 2. **Gate.** Run each deduped finding through the four gates in `judging.md` (no skip, no reorder, no revisit after verdict).
@@ -82,7 +84,7 @@ Then, after the loop body has run `{passes}` times (or stopped early), go to Tur
 
 **Turn 4 step 3b — Proof-of-concept verification. SKIP entirely unless `--poc` was passed, and run it only on the final pass of the scan** (on a 1-pass scan, that is the only pass). Follow `{resolved_path}/poc-guide.md`. In short:
 
-1. From this pass's gated set, take every **FINDING** the gate scored **High/Critical** (confidence ≥ 90), highest first.
+1. From this pass's gated set, take every **FINDING** the gate scored **High/Critical** (confidence ≥ 90), highest first. On a multi-pass scan, add every High/Critical FINDING in the earlier `run-N.md` files whose key this pass did not raise: the report publishes the union of all passes, so a finding only an earlier pass found must be verified too. For such a key, copy the earlier block into this pass's step 5a output unchanged except for the `poc=` attribute (or its rewrite as a lead), so `assemble.sh` sees the verdict.
 2. Detect the build toolchain (`cargo-build-sbf`, `anchor`, `rustup`). If it is absent, label every one of those findings **UNVERIFIED** with the reason and **do not install anything** — print the one-line install hint and move on.
 3. For each, within the per-finding and total budget in `poc-guide.md`, build the program in a **scratch copy** of the repo (never the audited tree, never the user's tests) and run one regression test under `.rust-auditor/runs/{stamp}/poc/<finding-id>/` that tries to demonstrate the bug.
 4. Attach the label:

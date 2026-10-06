@@ -16,7 +16,7 @@ Prove the vulnerable state exists in a live deployment.
 
 - Structurally impossible (enforced invariant or runtime rule prevents it) → **REJECTED**
 - Requires privileged actions outside normal operation → **DEMOTE**
-- Achievable through normal usage, through instructions composed in one transaction, or through common mint behaviors (Token-2022 transfer fees and hooks, freeze authority, a closed and re-created account at the same address) → **clears**, continue
+- Achievable through normal usage, through instructions composed in one transaction, or through common mint behaviors (Token-2022 transfer fees and hooks, freeze authority, a mint closed at zero supply and re-created at the same address) → **clears**, continue
 
 ## Gate 3 — Trigger
 
@@ -64,7 +64,7 @@ When the proof is in the code — quote the line, and the layout, value or accou
 
 Start at **100**, deduct: partial attack path **-20**, bounded non-compounding impact **-15**, requires specific (but achievable) state **-10**. Confidence ≥ 75 gets description + fix. Below 75 gets description only.
 
-**The threshold is 75, and it is set here.** `report-formatting.md` reads it from this line and states it nowhere else. It is 75 and not 80 because the three lead-promotion rules below all land a promoted lead at exactly 75: at a threshold of 80 every cross-program echo, every multi-agent convergence and every completed partial path would be promoted to a finding and then printed with no **Fix** block. The **correctness lane** (Gate 4) is fixed at 75 for the same reason: the report has no severity field — confidence is its only rank — so 75 is the lowest rank that still prints a **Fix**, which is where a Low/Info defect belongs. Moving this number means moving those four, or the promotions and the lane stop being worth making.
+**The threshold is 75, and it is set here.** `report-formatting.md` reads it from this line and states it nowhere else. It is 75 and not 80 because the four lead-promotion rules below all land a promoted lead at exactly 75: at a threshold of 80 every cross-program echo, every multi-agent convergence and every correctness defect would be promoted to a finding and then printed with no **Fix** block (a completed partial path is printed without one by design). The **correctness lane** (Gate 4) is fixed at 75 for the same reason: the report has no severity field — confidence is its only rank — so 75 is the lowest rank that still prints a **Fix**, which is where a Low/Info defect belongs. Moving this number means moving those rules and the lane, or the promotions stop being worth making.
 
 **Integer overflow depends on the Build context.** Read `Release overflow checks` at the top of `source.md`. The setting is **per workspace**: when the line says `differs per workspace`, use the root that lists the crate under review (a nested or excluded workspace is built with its own `[profile.release]`). When it is **not set** or **OFF**, `+`, `-` and `*` on integers wrap silently in the deployed program and an overflow finding is scored like any other value bug. When it is **on**, the same overflow panics and the transaction fails, so the impact is that the instruction fails for that input — score it as a denial of service, not as a wrong value, unless the panic blocks other users' funds. `as` casts truncate and `wrapping_*` wraps **in every build**, whatever the setting.
 

@@ -34,9 +34,9 @@ You are the orchestrator of a parallelized security audit of Rust programs that 
     d=$(dirname "$f")
     while [ ! -f "$d/Cargo.toml" ] && [ "$d" != "." ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
     [ -f "$d/Cargo.toml" ] || continue
-    deps=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/' "$d/Cargo.toml")
-    printf '%s\n' "$deps" | grep -qE '(^|[[:space:].[])"?(anchor-lang|anchor-spl|solana-program|solana-program-entrypoint|solana-account-info|pinocchio[a-z0-9-]*|steel)"?[[:space:]]*[]=.]' || continue
-    printf '%s\n' "$deps" | grep -qE '(^|[[:space:].[])"?(solana-client|solana-rpc-client[a-z0-9-]*|anchor-client|clap|tokio|reqwest)"?[[:space:]]*[]=.]' && continue
+    deps=$(awk '{ sub(/[[:space:]]*#.*/, "") } /^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/ && s !~ /cfg\(not\(/' "$d/Cargo.toml")
+    printf '%s\n' "$deps" | grep -qE '(^[[:space:]]*|dependencies\.)"?(anchor-lang|anchor-spl|solana-program|solana-program-entrypoint|solana-account-info|pinocchio[a-z0-9-]*|steel)"?[[:space:]]*[]=.]' || continue
+    printf '%s\n' "$deps" | grep -qE '(^[[:space:]]*|dependencies\.)"?(solana-client|solana-rpc-client[a-z0-9-]*|anchor-client|clap|tokio|reqwest)"?[[:space:]]*[]=.]' && continue
     echo "$f"
   done
   ```
@@ -44,7 +44,7 @@ You are the orchestrator of a parallelized security audit of Rust programs that 
   Do not re-derive this command — paste it. Three parts of it are **required, not tidiness**:
 
   - `-type f` — `cat` on a directory breaks the source build, and a `find` without it matches any directory whose name ends in `.rs`.
-  - The `[dependencies]`-only `awk` — a program crate routinely lists `solana-program-test`, `litesvm`, `tokio` or `solana-client` under `[dev-dependencies]` for its tests. Reading the whole manifest would classify every tested program as a client and scan nothing.
+  - The `[dependencies]`-only `awk` — a program crate routinely lists `solana-program-test`, `litesvm`, `tokio` or `solana-client` under `[dev-dependencies]` for its tests, or under a host-only `[target.'cfg(not(target_os = "solana"))'.dependencies]` table. Reading the whole manifest would classify every tested program as a client and scan nothing. The `awk` drops `#` comments and host-only (`cfg(not(...))`) target tables, and the greps match a crate name only in key position (`name =`, `name.workspace`, `[dependencies.name]`), never inside a `features = [...]` list.
   - The walk up to the nearest `Cargo.toml` — a program's instruction handlers live in `src/instructions/*.rs`, several directories below the manifest that says what the crate is.
 
   **If the command prints nothing**, the repository has `.rs` files but no crate that depends on a Solana program framework. Print `no crate depends on anchor-lang, solana-program or pinocchio — scanning every non-test .rs file`, and re-run the `find` **without** the `| sort | while … done` filter. Do not stop: a program can reach the runtime through a framework this list does not know.
@@ -301,17 +301,17 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
    for f in {file list}; do d=$(dirname "$f"); while [ ! -f "$d/Cargo.toml" ] && [ "$d" != "." ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done; [ -f "$d/Cargo.toml" ] && printf '%s\n' "$d/Cargo.toml"; done | sort -u > $B/manifests.txt
    for m in ./Cargo.toml ./Anchor.toml; do [ -f "$m" ] && ! grep -qxF "$m" $B/manifests.txt && printf '%s\n' "$m" >> $B/manifests.txt; done
    fw=$(grep 'Cargo.toml$' $B/manifests.txt | while IFS= read -r m; do
-     deps=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/' "$m")
-     has() { printf '%s\n' "$deps" | grep -qE "(^|[[:space:].[])\"?($1)\"?[[:space:]]*[]=.]"; }
-     if has 'anchor-lang'; then echo Anchor; elif has 'pinocchio[a-z0-9-]*'; then echo Pinocchio
+     deps=$(awk '{ sub(/[[:space:]]*#.*/, "") } /^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[(target\..*\.)?dependencies[].]/ && s !~ /cfg\(not\(/' "$m")
+     has() { printf '%s\n' "$deps" | grep -qE "(^[[:space:]]*|dependencies\\.)\"?($1)\"?[[:space:]]*[]=.]"; }
+     if has 'anchor-lang|anchor-spl'; then echo Anchor; elif has 'pinocchio[a-z0-9-]*'; then echo Pinocchio
      elif has 'steel'; then echo Steel; elif has 'solana-program|solana-program-entrypoint|solana-account-info'; then echo 'native solana-program'; fi
    done | sort -u | paste -sd '+' - | sed 's/+/ + /g')
-   [ -n "$fw" ] || fw="unknown — no in-scope crate depends on anchor-lang, pinocchio or solana-program"
+   [ -n "$fw" ] || fw="unknown — no in-scope crate depends on anchor-lang, anchor-spl, pinocchio, steel or solana-program"
    ws_root() { c=$(dirname "$1"); d=$c
      while :; do
-       if [ -f "$d/Cargo.toml" ] && grep -q '^[[:space:]]*\[workspace\][[:space:]]*$' "$d/Cargo.toml"; then
+       if [ -f "$d/Cargo.toml" ] && grep -qE '^[[:space:]]*\[workspace\][[:space:]]*(#.*)?$' "$d/Cargo.toml"; then
          rel=${c#"$d"}; rel=${rel#/}
-         ex=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[workspace\][[:space:]]*$/' "$d/Cargo.toml" | tr -d ' \t\r\n' | grep -oE 'exclude=\[[^]]*\]' | grep -oE '"[^"]*"' | tr -d '"')
+         ex=$(awk '/^[[:space:]]*\[/ { s=$0 } s ~ /^[[:space:]]*\[workspace\][[:space:]]*(#.*)?$/' "$d/Cargo.toml" | tr -d ' \t\r\n' | grep -oE 'exclude=\[[^]]*\]' | grep -oE '"[^"]*"' | tr -d '"')
          for x in $ex; do x=${x#./}; x=${x%/}; case "$rel/" in "$x"/*) [ -n "$rel" ] && { echo "$1"; return; } ;; esac; done
          echo "$d/Cargo.toml"; return
        fi
@@ -348,7 +348,7 @@ Then build `source.md`, run the memory step, and only then cat the bundles — i
 python3 {resolved_path}/account-map.py --out .rust-auditor/runs/{stamp}/account-map.md {file list}
 ```
 
-The script is Python standard library + `rg` only; it never installs anything and writes only the `--out` file. It lists every instruction handler with its accounts (signer / mut / owner / type / PDA seeds and bump source / init / close / constraints), its cross-program calls (the target program and how its ID is validated, plus signer seeds), the state it writes and how it is gated, and opens with an auto-highlighted **Review leads** section — authority-bearing accounts written with no signer check, keys compared against stored data with no `is_signer` (`key-compared-no-signer`), `UncheckedAccount` with no valid `/// CHECK`, PDA seeds lacking a user key, caller-chosen bumps, hand-coded byte offsets that miss the `#[repr(C)]` struct layout (`offset-mismatch`), CPI to a non-constant program ID, unvalidated `remaining_accounts`. Global singletons are folded so they do not bury the per-user leads: a constant-seed PDA is one `singleton-init` lead on the instruction that creates it (or one `singleton-write` when nothing in scope creates it), constant CPI signer seeds are one `global-signer` lead per program, and a child PDA keyed only by a validated parent, or a PDA owned by another program, raises nothing. It parses **Anchor** structurally; for **native `solana-program` and Pinocchio** it fills what it can and lists the rest under a **Needs completion** section.
+The script is Python standard library only; it never installs anything and writes only the `--out` file. It lists every instruction handler with its accounts (signer / mut / owner / type / PDA seeds and bump source / init / close / constraints), its cross-program calls (the target program and how its ID is validated, plus signer seeds), the state it writes and how it is gated, and opens with an auto-highlighted **Review leads** section — authority-bearing accounts written with no signer check, keys compared against stored data with no `is_signer` (`key-compared-no-signer`), `UncheckedAccount` with no valid `/// CHECK`, PDA seeds lacking a user key, caller-chosen bumps, hand-coded byte offsets that miss the `#[repr(C)]` struct layout (`offset-mismatch`), CPI to a non-constant program ID, unvalidated `remaining_accounts`. Global singletons are folded so they do not bury the per-user leads: a constant-seed PDA is one `singleton-init` lead on the instruction that creates it (or one `singleton-write` when nothing in scope creates it), constant CPI signer seeds are one `global-signer` lead per program, and a child PDA keyed only by a validated parent, or a PDA owned by another program, raises nothing. It parses **Anchor** structurally; for **native `solana-program` and Pinocchio** it fills what it can and lists the rest under a **Needs completion** section.
 
 > **The map is leads, never findings.** Every line is a place to look produced by pattern matching; an agent confirms each one in the source and reports nothing on the map's word alone. The script cannot see logic bugs, so an empty Review-leads section is not a clean bill.
 
