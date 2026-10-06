@@ -1,46 +1,151 @@
 {
   "skill_name": "rust-auditor",
-  "notes": "Scorable benchmark targets with documented bugs. See benchmarks.md for commits, scope and the full known-bug list. Each prompt points the skill at a cloned corpus target; expected_output lists the documented bugs a run should surface (recall) without flagging the paired secure variant (precision). Re-pin commits before scoring.",
+  "notes": "Scorable benchmark targets with documented bugs. See benchmarks.md for commits, scope and the full known-bug list. Each prompt points the skill at a cloned corpus target; expected_output lists the bugs a run should surface (recall). BEFORE EVERY RUN: snapshot the pinned commit with `git archive` (no history) and strip comments from the in-scope files with `python3 evals/strip-comments.py --in-place --list scope.txt`, then `--check` (benchmarks.md section 0) - template comments name the bugs. Assertions tagged [source] are documented by the target; [found-by-skill] were raised by a rust-auditor run and re-confirmed by hand in the code at the pinned commit, not documented by the source; [not-present] mark a documented bug the code does not contain - a finding there is a false positive. A paired secure.rs is a negative control only for its module's documented bug (several secure variants carry real bugs, benchmarks.md 1b). Targets cited by the skill's own references (sec-template B13/B14, M0 in Part C) measure fit, not generalisation (benchmarks.md section 8). Re-pin commits before scoring.",
   "evals": [
     {
       "id": 0,
       "name": "sec-template-core-anchor",
-      "prompt": "Run rust auditor on the vulnerable programs in {TARGET_PROJECT_PATH} (Ubuntu-Technologies/solana-security-template @cb48608): signer-authorization, owner-check, account-type-mismatch, insecure-init, duplicate-accounts, pda-security, account-close, arithmetic-overflow.",
-      "expected_output": "High findings matching the documented class per module: missing signer (B1), missing owner (B2), type cosplay (B3), re-init (B4), duplicate mutable accounts (B6), non-canonical/predictable PDA (B7), manual-close revival (B8), unchecked overflow (B10). No finding on the paired secure.rs variants.",
-      "files": ["programs/signer-authorization/src/vulnerable.rs", "programs/owner-check/src/vulnerable.rs", "programs/account-type-mismatch/src/vulnerable.rs", "programs/insecure-init/src/vulnerable.rs", "programs/duplicate-accounts/src/vulnerable.rs", "programs/pda-security/src/vulnerable.rs", "programs/account-close/src/vulnerable.rs", "programs/arithmetic-overflow/src/vulnerable.rs"],
-      "assertions": ["B1 missing-signer on signer-authorization", "B2 missing-owner on owner-check", "B3 type-cosplay on account-type-mismatch", "B4 reinit on insecure-init", "B6 duplicate-mutable on duplicate-accounts", "B7 pda on pda-security", "B8 manual-close on account-close", "B10 overflow on arithmetic-overflow", "no findings on *secure.rs"]
+      "prompt": "Run rust auditor on the vulnerable programs in {TARGET_PROJECT_PATH} (Ubuntu-Technologies/solana-security-template @cb48608, comments stripped): signer-authorization, owner-check, account-type-mismatch, insecure-init, duplicate-accounts, pda-security, account-close, arithmetic-overflow.",
+      "expected_output": "High findings matching the documented class per module: missing signer (B1), missing owner (B2), type cosplay (B3), re-init (B4), duplicate mutable accounts (B6), non-canonical/predictable PDA (B7). account-close has NO revival bug (Anchor 0.32.1 `close = owner` zeroes and reassigns) - a B8 finding there is a false positive. arithmetic-overflow: unchecked arithmetic PANICS (root overflow-checks = true), so at most a Low DoS, not a wrapping High; the ignored `_min_out` (B16) is the real bug. Found-by-skill (re-confirmed in code): duplicate-accounts authority never bound to from_account.owner; owner-check read_config compares the caller key with no is_signer; account-type-mismatch process_action reads the key at data[1..33] against a repr(C) layout with the key at 16..48, so it always fails (correctness, Low). No finding of a module's documented bug on its paired secure.rs.",
+      "files": [
+        "programs/signer-authorization/src/vulnerable.rs",
+        "programs/owner-check/src/vulnerable.rs",
+        "programs/account-type-mismatch/src/vulnerable.rs",
+        "programs/insecure-init/src/vulnerable.rs",
+        "programs/duplicate-accounts/src/vulnerable.rs",
+        "programs/pda-security/src/vulnerable.rs",
+        "programs/account-close/src/vulnerable.rs",
+        "programs/arithmetic-overflow/src/vulnerable.rs"
+      ],
+      "assertions": [
+        "[source] B1 missing-signer on signer-authorization",
+        "[source] B2 missing-owner on owner-check",
+        "[source] B3 type-cosplay on account-type-mismatch",
+        "[source] B4 reinit on insecure-init",
+        "[source] B6 duplicate-mutable on duplicate-accounts",
+        "[source] B7 pda on pda-security",
+        "[not-present] no B8 revival finding on account-close (close = owner, anchor 0.32.1)",
+        "[source, reclassified] arithmetic-overflow overflow scored as panic / DoS (overflow-checks = true), not as a wrapping value bug",
+        "[found-by-skill] B16 ignored _min_out on arithmetic-overflow swap_x_for_y",
+        "[found-by-skill] T3 authority not bound to from_account.owner on duplicate-accounts",
+        "[found-by-skill] T5 no is_signer on caller in owner-check process_read_config",
+        "[found-by-skill] T7 correctness: process_action offsets misread the User layout (always fails) on account-type-mismatch",
+        "no finding of the module's documented bug on its paired secure.rs"
+      ]
     },
     {
       "id": 1,
       "name": "sec-template-new-classes",
-      "prompt": "Run rust auditor on the account-griefing, authority-transfer, account-reloading, remaining-accounts and amm/buggy-amm programs in {TARGET_PROJECT_PATH} (solana-security-template @cb48608).",
-      "expected_output": "Leads/findings for: account-creation DoS via predictable init PDA (B13); single-step authority transfer (B14); stale-after-CPI read (B11); unvalidated remaining_accounts (B5-adjacent); and in buggy-amm weak PDA seeds (B7) + unchecked overflow (B10) + missing slippage / ignored min_out (B16).",
-      "files": ["programs/account-griefing/src/vulnerable.rs", "programs/authority-transfer/src/vulnerable.rs", "programs/account-reloading/src/vulnerable.rs", "programs/remaining-accounts/src/vulnerable.rs", "programs/amm/buggy-amm/src/instructions/swap.rs"],
-      "assertions": ["B13 init-DoS on account-griefing", "B14 single-step-authority on authority-transfer", "B11 stale-after-cpi on account-reloading", "B5 unvalidated remaining_accounts on remaining-accounts", "B16 missing-slippage on buggy-amm swap"]
+      "prompt": "Run rust auditor on the account-griefing, authority-transfer, account-reloading, remaining-accounts and amm/buggy-amm programs in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped).",
+      "expected_output": "Leads/findings for: account-creation DoS via predictable init PDA (B13); single-step authority transfer (B14); unvalidated remaining_accounts (B5-adjacent); and in buggy-amm weak PDA seeds (B7) + unchecked overflow that WRAPS (the programs/amm workspace has no overflow-checks) (B10) + missing slippage / ignored min_out (B16). account-reloading has NO stale-after-CPI bug (vulnerable.rs makes no CPI) - a B11 finding there is a false positive. Found-by-skill (re-confirmed in code): buggy-amm deposit mints the caller's `amount` of LP regardless of the x/y paid (free LP with max_x = max_y = 0).",
+      "files": [
+        "programs/account-griefing/src/vulnerable.rs",
+        "programs/authority-transfer/src/vulnerable.rs",
+        "programs/account-reloading/src/vulnerable.rs",
+        "programs/remaining-accounts/src/vulnerable.rs",
+        "programs/amm/buggy-amm/src/instructions/swap.rs",
+        "programs/amm/buggy-amm/src/instructions/deposit.rs"
+      ],
+      "assertions": [
+        "[source] B13 init-DoS on account-griefing",
+        "[source] B14 single-step-authority on authority-transfer",
+        "[not-present] no B11 stale-after-cpi finding on account-reloading (no CPI in vulnerable.rs)",
+        "[source] B5 unvalidated remaining_accounts on remaining-accounts",
+        "[source] B16 missing-slippage on buggy-amm swap",
+        "[source] B10 overflow on buggy-amm scored as wrapping (amm workspace has no overflow-checks)",
+        "[found-by-skill] T1 deposit mints amount LP independent of x/y paid on buggy-amm"
+      ]
     },
     {
       "id": 2,
       "name": "sec-patterns-anchor-and-pinocchio",
       "prompt": "Run rust auditor on the Anchor and Pinocchio vulnerable variants in {TARGET_PROJECT_PATH} (Abdullateef1x/solana-security-patterns @4646ebe).",
       "expected_output": "Each pattern flagged in both anchor/ and pinocchio/ vulnerable.rs: missing signer (B1), missing has_one link (B1/B7), unsafe arithmetic (B10), insecure PDA (B7), CPI authority misuse / user-controlled transfer authority (B5). Tests account-map + native/Pinocchio manual-validation review; not the --poc build path (repo may not build).",
-      "files": ["programs/missing-signer-check/pinocchio/src/vulnerable.rs", "programs/missing-has-one/pinocchio/src/vulnerable.rs", "programs/unsafe-arithmetic/pinocchio/src/vulnerable.rs", "programs/insecure-pda/pinocchio/src/vulnerable.rs", "programs/cpi-authority-misuse/pinocchio/src/vulnerable.rs"],
-      "assertions": ["B1 on missing-signer-check (both frameworks)", "B7/B1 on missing-has-one", "B10 on unsafe-arithmetic", "B7 on insecure-pda", "B5 on cpi-authority-misuse"]
+      "files": [
+        "programs/missing-signer-check/pinocchio/src/vulnerable.rs",
+        "programs/missing-has-one/pinocchio/src/vulnerable.rs",
+        "programs/unsafe-arithmetic/pinocchio/src/vulnerable.rs",
+        "programs/insecure-pda/pinocchio/src/vulnerable.rs",
+        "programs/cpi-authority-misuse/pinocchio/src/vulnerable.rs"
+      ],
+      "assertions": [
+        "B1 on missing-signer-check (both frameworks)",
+        "B7/B1 on missing-has-one",
+        "B10 on unsafe-arithmetic",
+        "B7 on insecure-pda",
+        "B5 on cpi-authority-misuse"
+      ]
     },
     {
       "id": 3,
       "name": "escrow-pinocchio-destination-validation",
-      "prompt": "Run rust auditor on the p-escrow Pinocchio program in {TARGET_PROJECT_PATH} (solana-security-template @cb48608).",
-      "expected_output": "A High finding that the refund destination is not validated against the stored maker, letting a refund be redirected to an attacker (destination/recipient validation, B15/L2) — a native/Pinocchio manual-validation miss.",
-      "files": ["programs/p-escrow/src/instructions"],
-      "assertions": ["refund destination not checked against escrow.maker"]
+      "prompt": "Run rust auditor on the p-escrow Pinocchio program in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped).",
+      "expected_output": "A High finding that the refund destination is not validated against the stored maker, letting a refund be redirected to an attacker (destination/recipient validation, B15/L2) - a native/Pinocchio manual-validation miss. Found-by-skill (re-confirmed in code): process_secure_refund requires destination == caller (the maker's wallet) and token-transfers to it, so the secure refund fails for every caller and escrowed tokens cannot be refunded.",
+      "files": [
+        "programs/p-escrow/src/instructions"
+      ],
+      "assertions": [
+        "[source] refund destination not checked against escrow.maker",
+        "[found-by-skill] T9 process_secure_refund always fails (destination must equal the caller wallet)"
+      ]
     },
     {
       "id": 4,
       "name": "halborn-ctf-native-noise-check",
       "prompt": "Run rust auditor on the HalbornCTF_Rust_Solana native program in {TARGET_PROJECT_PATH} (HalbornSecurity/CTFs @684f1af).",
       "expected_output": "A clean run on a native (non-Anchor) program: the account-map and native/Pinocchio review produce sane leads over hand-rolled account handling without crashing. Bugs are undisclosed (CTF); scored for robustness and plausible leads, not against a fixed answer key.",
-      "files": ["HalbornCTF_Rust_Solana/ctf_game/ctf/src/processor.rs", "HalbornCTF_Rust_Solana/ctf_game/ctf/src/instructions.rs", "HalbornCTF_Rust_Solana/ctf_game/ctf/src/state.rs"],
-      "assertions": ["no crash on native program", "account-map emits native handler rows"]
+      "files": [
+        "HalbornCTF_Rust_Solana/ctf_game/ctf/src/processor.rs",
+        "HalbornCTF_Rust_Solana/ctf_game/ctf/src/instructions.rs",
+        "HalbornCTF_Rust_Solana/ctf_game/ctf/src/state.rs"
+      ],
+      "assertions": [
+        "no crash on native program",
+        "account-map emits native handler rows"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "m0-mextensions-pre-fix",
+      "prompt": "Run rust auditor on the ext_swap and m_ext programs in {TARGET_PROJECT_PATH} (m0-foundation/solana-extensions at the PRE-FIX commit 25e29e1, snapshot with git archive, comments stripped).",
+      "expected_output": "The M0 MExtensions report findings at 25e29e1 (the report links pin AdevarLabs/solana-extensions@25e29e1c4564b12cb811e9461b44b5305a824ac9; fixed later by fc4d934 - auditing HEAD scores nothing): #1 Critical missing admin access control on ext_swap whitelist ops; #2 retroactive fee application; #3 imprecise multiplier toward insolvency; #4 swap does not forbid a same-token swap; #5 m_ext init front-running; #6 misaligned Anchor constraint on the swap source token account. Found-by-skill (re-confirmed at 25e29e1, corroborated by fc4d934): wrap/unwrap/sync depend on the vault's Earner account; set_m_mint keeps the old mint's stored index; ext_swap initialize_global is first-caller-wins. Note: the skill's Part C cites #1/#2/#3/#5/#6, so this target measures fit, not generalisation.",
+      "files": [
+        "programs/ext_swap/src",
+        "programs/m_ext/src"
+      ],
+      "assertions": [
+        "[source] #1 missing admin check on ext_swap whitelist instructions",
+        "[source] #2 retroactive fee application",
+        "[source] #3 imprecise multiplier",
+        "[source] #4 same-token swap not forbidden",
+        "[source] #5 m_ext initialize front-running",
+        "[source] #6 swap source token account constraint",
+        "[found-by-skill] M0-A1 wrap/unwrap/sync depend on the per-vault Earner account",
+        "[found-by-skill] M0-A2 set_m_mint keeps a stale index",
+        "[found-by-skill] M0-A3 ext_swap initialize_global first caller becomes admin"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "sec-template-secure-variants-real-bugs",
+      "prompt": "Run rust auditor on the secure variants in {TARGET_PROJECT_PATH} (solana-security-template @cb48608, comments stripped): duplicate-accounts, owner-check, account-type-mismatch, p-escrow, amm/secure-amm.",
+      "expected_output": "The secure variants fix their module's documented bug but still carry real bugs (found-by-skill, re-confirmed in code): duplicate-accounts authority not bound to from_account.owner (T3); owner-check read_config with no is_signer (T5); account-type-mismatch process_action offsets misread the layout so it always fails (T7, correctness); p-escrow secure refund always fails (T9); secure-amm deposit mints amount LP regardless of x/y (T1) and divides by an integer ratio that is 0 when vault_x < vault_y (T2, DoS). No finding of the module's documented bug.",
+      "files": [
+        "programs/duplicate-accounts/src/secure.rs",
+        "programs/owner-check/src/secure.rs",
+        "programs/account-type-mismatch/src/secure.rs",
+        "programs/p-escrow/src/instructions/refund.rs",
+        "programs/amm/secure-amm/src/instructions/deposit.rs"
+      ],
+      "assertions": [
+        "[found-by-skill] T3 on duplicate-accounts secure",
+        "[found-by-skill] T5 on owner-check secure",
+        "[found-by-skill] T7 correctness on account-type-mismatch secure",
+        "[found-by-skill] T9 on p-escrow secure refund",
+        "[found-by-skill] T1 free LP on secure-amm deposit",
+        "[found-by-skill] T2 zero-ratio DoS on secure-amm deposit",
+        "no finding of the module's documented bug"
+      ]
     }
   ]
 }
