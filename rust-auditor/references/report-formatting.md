@@ -65,6 +65,7 @@ This is what the assembler emits.
 | **Files reviewed** | `programs/vault/src/lib.rs` · `programs/vault/src/state.rs`<br>`programs/vault/src/instructions/deposit.rs` · `programs/vault/src/instructions/withdraw.rs` | <!-- every file, 3 per line -->
 | **Confidence threshold (1-100)** | N                                    |
 | **Passes** | 3                                                      | <!-- only when passes > 1 -->
+| **Agents** | ⚠️ 11/12 agents returned results. The other specialties are not covered by this scan. | <!-- only on a 1-pass scan that lost an agent -->
 | **Memory** | 12 records before this scan · 14 after · `a1b2c3d`     | <!-- only when memory is on -->
 | **Run files** | ⚠️ 2 findings marked, 1 readable. 1 could not be read. | <!-- only when the structure check disagrees -->
 
@@ -266,12 +267,15 @@ freeze is a property of the assembled file.
 
 The plain report is the shape above with every conditional piece left out: a Scope table of
 exactly three rows (`Mode`, `Files reviewed`, `Confidence threshold (1-100)`), no `Passes`, no
-`Memory`, no `seen in k/N runs`, no `KNOWN` / `NEW` tag, no `PoC:` segment, no "Known from earlier
-scans" section. The freeze covers the report's **content and order, not its column padding** and not
+`Memory`, no `Agents`, no `Run files`, no `seen in k/N runs`, no `KNOWN` / `NEW` tag, no `PoC:` segment, no
+"Known from earlier scans" section. Two of those rows report a loss, not an option, and a plain
+scan that lost coverage still prints them: `Agents` when pass 1 ran fewer than 12 agents, and
+`Run files` when no run file exists or the structure check disagrees. Saying what the scan did not
+cover does not break the freeze; a plain scan that ran whole prints neither. The freeze covers the report's **content and order, not its column padding** and not
 what lands on disk.
 
 **This file's template is the reference**: a change that makes a plain scan print anything the
-template marks as conditional breaks the freeze.
+template marks as conditional, other than the `Agents` and `Run files` loss rows, breaks the freeze.
 
 What the freeze does **not** cover: writing files. Every scan writes a runs directory and
 assembles a report there, at any pass count. Writing a file is not printing, and the freeze is
@@ -401,4 +405,7 @@ The `R of P` prefix comes from counting run files. The dead agent's **name** nev
 here — it stays in the run file, in the sentence under the `<!--RUN-->` marker.
 
 On a 1-pass scan this row is suppressed, so a pass 1 that produced nothing is reported by the
-`Run files` row instead: `⚠️ No pass produced a run file. This scan reviewed nothing.`
+`Run files` row instead: `⚠️ No pass produced a run file. This scan reviewed nothing.` A pass 1
+that ran with fewer than 12 agents gets an `Agents` row instead, composed from `pass_1_agents`:
+`⚠️ 8/12 agents returned results. The other specialties are not covered by this scan.` A 12/12
+plain scan prints no `Agents` row.

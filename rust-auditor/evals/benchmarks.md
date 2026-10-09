@@ -105,7 +105,7 @@ evidence column names the lines that prove it.
 | T4 | `owner-check` `initialize_config` (`lib.rs`) | no signer and no is-initialized check: anyone overwrites the admin of any program-owned config account, then passes `read_config` as admin | owner check only; raw `copy_nonoverlapping` of `Config { admin }` | B4 + B1 | High |
 | T5 | `owner-check` `process_read_config` (**vulnerable and secure**) | the caller's key is compared with the stored admin but `is_signer` is never checked — anyone passes the admin's key | `caller.address().as_ref() != stored_admin`, no `is_signer()` | B1 | High (in the module's own threat model) |
 | T6 | `account-type-mismatch` `init_user` / `init_admin` (`lib.rs`) | no signer and no discriminator / is-initialized check: any program-owned account (a live `User` or `Admin`) is re-written by anyone | owner check only, then raw write of a fresh struct | B4 | High |
-| T7 | `account-type-mismatch` `process_action` (**vulnerable and secure**) | hand offsets misread the `#[repr(C)]` layout: the key is read at `data[1..33]` and the balance at `33..41`, but `User` is `discriminator@0, _padding@1..8, balance@8..16, pubkey@16..48`. The key check compares padding + balance bytes, so it never passes for a real user — the instruction fails for every caller, and the module's missing-signer bug is **unreachable** | `&data[1..33]`, `data[33..41]` vs `state.rs` | correctness (offset) | Low (correctness lane) |
+| T7 | `account-type-mismatch` `process_action` (**vulnerable and secure**) | hand offsets misread the `#[repr(C)]` layout: the key is read at `data[1..33]` and the balance at `33..41`, but `User` is `discriminator@0, _padding@1..8, balance@8..16, pubkey@16..48`. The key check compares padding + balance bytes, so it never passes for a real user — the instruction fails for every caller, and the module's missing-signer bug is **masked** by it (`references/judging.md` Gate 1 now reports a masked bug as its own finding; this row has not been re-scored under that rule) | `&data[1..33]`, `data[33..41]` vs `state.rs` | correctness (offset) | Low (correctness lane) |
 | T8 | `multisig-payer` `vote` | any signer votes any number of times; no voter record, no membership check | `yes_votes += 1` with only `voter: Signer` | B1 / logic | Medium |
 | T9 | `p-escrow` `process_secure_refund` | requires `destination == caller` (the maker's wallet) and then token-transfers to it; a wallet is not a token account, so the "secure" refund fails for every caller and the escrowed tokens cannot be refunded | `destination.key() != caller.key()` → `Err`; `Transfer { to: destination }` | locked funds (always-failing refund) | Medium |
 
@@ -212,11 +212,10 @@ verified aggregate counts are recorded here, not fabricated specifics):
 
 - **RustFund** First Flight — codehawks.cyfrin.io/c/2025-03-rustfund (170 nSLOC): **4 High, 3 Medium,
   4 Low** (verified on the results page).
-- **SSSwap** First Flight — codehawks.cyfrin.io/c/2025-05-ssswap: **5 High, 4 Medium** (per the
-  awesome list).
+- **SSSwap** First Flight — codehawks.cyfrin.io/c/2025-05-ssswap: **5 High, 4 Medium, 1 Low**
+  (verified on the results page).
 
-These are good future additions to the scorable set once their code is checked out at the contest
-commit and the per-finding list is pulled from the published report.
+Both are now scored in full: RustFund in §11 and SSSwap in §12.
 
 ## 8. Leakage hygiene — targets the skill has already seen
 
@@ -244,8 +243,16 @@ target.
 - **§10 (`code-423n4/2025-01-pump-science`)** shaped design-guess demotion, privileged-op griefing
   (**B26**), fee-base consistency, piecewise continuity, the rent-floor subtraction and setter
   completeness.
-- **Held-out candidates:** §4 (HalbornCTF) and the §7 First Flights are not cited anywhere in the
-  skill.
+- **§11 (RustFund)** and **§12 (SSSwap)** were scored blind first (their baselines are recorded in
+  each section) and then shaped: a bug masked by another finding is gated as a finding (Gate 1), a
+  per-instance role is not an admin (Gate 3), a fee that rounds to zero on a splittable path is not
+  dust, code-based cross-instruction echo, convergence that needs a FINDING behind it, stranded
+  rent and boundary overlap in the correctness lane, the rent-floor exception (RustFund), the
+  blocker cap in Gate 1 (SSSwap), the raw-unit and lamport-debit safe patterns, the auditor framing
+  of the agent prompts, and dead-agent accounting.
+- **§13 (Garden)** was scored blind once and then shaped the self-harm clause of the design-guess
+  rule.
+- **Held-out candidates:** §4 (HalbornCTF) is not cited anywhere in the skill.
 - Strip comments before every run (§0). Template comments name the bug class in the line that
   holds it.
 
@@ -298,3 +305,123 @@ plus 12 Low / Non-Critical. Summarized from the report:
 - **M-01** the buy that completes the curve charges the fee on the full input and applies less.
 - **M-02** the curve's SOL-balance check counts the rent-exempt lamports as reserves.
 - **M-03** the fee formula jumps at slot 250 (the linear phase does not land on the next phase).
+
+## 11. CodeHawks-Contests/2025-03-rustfund — CodeHawks First Flight #36 — `@b5dd7b0`
+
+<https://github.com/CodeHawks-Contests/2025-03-rustfund> · judged results:
+<https://codehawks.cyfrin.io/c/2025-03-rustfund/results?t=report>
+
+**Used to develop the skill — blind only for the baseline below** (§8). Score every later run on it as **fit**, not generalisation.
+
+Scope = `programs/rustfund/src/lib.rs` (one Anchor program, anchor-lang 0.30.1, release
+`overflow-checks = true`): a crowdfunding program with `fund_create`, `contribute`,
+`set_deadline`, `refund` and `withdraw`. The judged report lists 4 High, 3 Medium and 4 Low.
+Summarized from the result titles, each re-checked in the code by two independent reviewers:
+
+| ID | Documented bug | Status in the code |
+| --- | --- | --- |
+| H-01 | `withdraw` does not check that the deadline has passed | valid |
+| H-02 | `withdraw` does not check that the goal was met | valid |
+| H-03 | `contribute` never adds the amount to `contribution.amount`, so every refund pays 0 | valid |
+| H-04 | `refund` does not check the goal, so contributors of a successful campaign can refund | valid — masked by H-03 in the code as written |
+| M-01 | `withdraw` does not reset `amount_raised`, so a later withdraw fails | valid |
+| M-02 | `set_deadline` never sets `dealine_set`, so the creator can move the deadline at any time | valid |
+| M-03 | `refund` does not lower `amount_raised`, so the creator's withdraw then fails | valid — masked by H-03 |
+| L-01 | `refund` skips the time check while the deadline is 0 | valid — masked by H-03 |
+| L-02 | no validation of the goal | **questionable** — a creation parameter contributors can read; `goal` is read nowhere today |
+| L-03 | direct lamport manipulation in `refund` / `withdraw` | **invalid** — a checked debit from a program-owned data account is the required pattern |
+| L-04 | no instruction closes a Fund or Contribution account, so rent stays locked | valid |
+
+Found-by-skill (re-confirmed in the code): `fund_create` uses the whole `name` as a PDA seed, and
+a seed holds at most 32 bytes, so every name longer than 32 bytes fails although `Fund` reserves
+200 (Low / correctness).
+
+**Blind baseline**, scored before the judging changes this target shaped (§8): all 9 valid items
+were raised — 5 as Findings (H-01, H-02, H-03, M-01, M-02) and 4 as Leads (H-04, M-03, L-01,
+L-04) — with 6 Findings, none a false positive (one debatable: `contribute` and `refund` both pass
+when the clock equals the deadline). The 4 Leads were all lost in judging, not in discovery.
+
+**After the changes** (one re-run of the 12 agents per §0; the judging rules were then revised
+against that run's output, and the same output was re-judged — fit, not generalisation). As first
+judged: 13 Findings — all 9 valid items as Findings (L-04's Fund half stays a Lead on purpose),
+1 false positive (`withdraw` / `refund` ignore the rent floor), 2 debatable, 1 duplicate split.
+Re-judged: 11 Findings at or above the threshold, all 9 valid items as Findings, no false
+positive, one debatable — the deadline-second overlap, promoted at 75. The boundary-overlap
+wording in `references/judging.md` was tightened after that re-judge to keep it a Lead; that last
+change has not been re-scored.
+
+## 12. CodeHawks-Contests/2025-05-ssswap — CodeHawks First Flight #41 — `@27a2ef8`
+
+<https://github.com/CodeHawks-Contests/2025-05-ssswap> · judged results:
+<https://codehawks.cyfrin.io/c/2025-05-ssswap/results?t=report>
+
+**Used to develop the skill — blind only for the baseline below** (§8). Score every later run on it as **fit**, not generalisation.
+
+Scope = `programs/amm/src/**` (one Anchor constant-product AMM, anchor-lang / anchor-spl 0.31.1,
+release `overflow-checks = true`). The judged report lists 5 High, 4 Medium and 1 Low. Summarized
+from the result titles, each re-checked in the code by two independent reviewers:
+
+| ID | Documented bug | Status in the code |
+| --- | --- | --- |
+| H-01 | `provide_liquidity` computes the LP amount with the wrong formula | valid |
+| H-02 | `provide_liquidity` takes no slippage bound | valid |
+| H-03 | no validation of mint decimals at pool creation | **invalid** — every formula works in raw base units and is scale-invariant |
+| H-04 | `provide_liquidity` mints from stale vault state | **invalid as stated** — the vaults are reloaded before they are read; the real defect is H-01's formula |
+| H-05 | no minimum liquidity lock | **questionable** — the mechanism is real (a fully drained pool cannot take liquidity again), the permanent-DoS impact is overstated |
+| M-01 | an attacker blocks pool creation for a pair through a PDA collision | valid |
+| M-02 | unchecked `u128 as u64` casts | valid — in `swap_exact_out` the truncated input lets a caller take almost the whole output reserve |
+| M-03 | `lp_mint` is initialised before `liquidity_pool` and fails | **invalid** — Anchor binds every account before any `init` block runs, and the `lp_mint` init needs only the pool's key |
+| M-04 | the swap fee rounds down to zero on small swaps | valid |
+| L-01 | non-standard token behaviour (transfer fee) is not handled | **disputed** — the root cause is real, but no Token-2022 pool can be created today (next paragraph) |
+
+Found-by-skill (re-confirmed in the code): the creator's and the provider's ATAs use
+`associated_token::*` without `associated_token::token_program`, so Anchor derives them with the
+SPL Token program, and `initialize_pool_with_liquidity`, `provide_liquidity` and `remove_liquidity`
+fail for every Token-2022 mint although the README lists Token-2022 as supported (Medium / Low,
+correctness).
+
+**Blind baseline**, scored before the judging changes this target shaped (§8): all 5 valid items
+were raised — 4 as Findings (H-01, H-02, M-01, M-02; the M-02 cast reported as a High reserve
+drain) and M-04 as a Lead — with 7 Findings, all valid. **4 of the 12 agents returned no FINDING or LEAD block:**
+each read its bundle and then reported that a safety classifier withheld its reply. That run
+prompted the auditor framing in the agent prompts and the `Agents` row for a 1-pass scan that loses
+an agent.
+
+**After the changes** (one re-run per §0; 12/12 agents returned results; the judging rules were
+then revised against that output and the same output re-judged — fit, not generalisation). As
+first judged: 11 Findings — all 5 valid items as Findings, no false positive, 4 duplicate splits
+(the transfer-fee path, L-01, appeared as 3 Findings at 90). Re-judged: 7 Findings, all 5 valid
+items as Findings, no false positive and no duplicate split; the one debatable item is the
+transfer-fee path (L-01), which the missing ATA token program blocks today, at 80. The blocker
+cap in `references/judging.md` Gate 1 was added after that re-judge to hold it at 75; it has not
+been re-scored. The found-by-skill Token-2022 ATA defect above was a Finding in the baseline but
+only one agent's Lead in the re-run.
+
+## 13. code-423n4/2025-11-garden — Code4rena, November 2025 — `@933f545`
+
+<https://github.com/code-423n4/2025-11-garden> · report:
+<https://code4rena.com/reports/2025-11-garden>
+
+**Used to develop the skill — blind only for the first run below** (§8). Score every later run on it as **fit**, not generalisation.
+
+A **false-positive control.** Scope = `solana/solana-native/programs/solana-native-swaps/src/lib.rs`
+and `solana/solana-spl-swaps/programs/solana-spl-swaps/src/lib.rs` — two Anchor HTLC swap programs,
+each its own workspace with release `overflow-checks = true`. The report has **no High or Medium in
+the Solana programs** (its only Medium is in the EVM code). Its top QA report lists one Solana Low:
+`initiate` does not require `redeemer != refundee`, so one party can create an order with itself and
+refund it at once (`[01]`). `known-issues.md` lists further accepted Solana behaviour (duplicate
+orders after a close, redeem after expiry, no zero-value or timelock checks).
+
+**Blind snapshot:** take `solana/`, `README.md`, `known-issues.md`, `scope.txt` and
+`out_of_scope.txt` only. Leave out `2025-11-garden-V12-findings.md`, `4naly3er-report.md` and
+`discord-export/` — they discuss candidate findings.
+
+Expected: **no Finding at or above the threshold** that two independent reviewers accept as a real
+defect. The QA Low is an acceptable `hardening-` Lead.
+
+**Scored blind** with the changes from the first §11 / §12 runs in place: 3 correctness Findings, all false positives —
+the same account accepted on both legs of `redeem`, `refund` and `instant_refund` when the funder
+names the program's identity PDA as a party, a state only the funder's own input creates and only
+the funder loses by. That run added the self-harm clause to the design-guess rule
+(`references/judging.md`, mirrored in `references/dedup-and-assembly.md` Turn 4); re-judged under
+it, the same agent output gives **0 Findings and 31 Leads**. The QA Low was not raised.

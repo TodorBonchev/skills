@@ -76,7 +76,7 @@ The pass count the scan runs is `{passes}` — settled in Turn 1b, 1 or more. Th
 >
 > **What it does write.** Every scan writes `.rust-auditor/runs/{stamp}/` — one `run-1.md`, one `scope.tsv`, one `full-report.md` — because the report is assembled from those files at every pass count, and `name`, `mode`, `files` and `threshold` are needed by every report. A 1-pass answer **does** create a `.rust-auditor/` directory and `runs/` files; keeping disk untouched was never what the rule was protecting.
 >
-> **What the rule protects, stated exactly:** on the plain path the scan reads no ledger, writes no `mem_` key, and prints a Scope table of exactly **three** rows — `Mode`, `Files reviewed`, `Confidence threshold (1-100)` — and no `Passes` row, no `Memory` row. Disk is not printed output. A later editor who makes a **memory** step unconditional is breaking this on purpose; writing the runs directory is not one of those steps.
+> **What the rule protects, stated exactly:** on the plain path the scan reads no ledger, writes no `mem_` key, and prints a Scope table of exactly **three** rows — `Mode`, `Files reviewed`, `Confidence threshold (1-100)` — and no `Passes` row, no `Memory` row. The one exception is a scan that lost coverage: it adds a loss row — `Agents` when pass 1 ran fewer than 12 agents, `Run files` when the run files do not add up (`report-formatting.md`). No flag produces it; never remove it to get back to three rows. Disk is not printed output. A later editor who makes a **memory** step unconditional is breaking this on purpose; writing the runs directory is not one of those steps.
 >
 > `--memory` on a 1-pass run is the single exception: memory turns on, the loop machinery stays off.
 
@@ -111,7 +111,7 @@ printf '%s\t%s\n' files "{file list}"    >> .rust-auditor/runs/{stamp}/scope.tsv
 - `{mode}` — `default` or `filename`, as Mode Selection settled it.
 - `{file list}` — every in-scope path the `find` returned, **space separated on one line**, in `find` order (the command sorts it). The assembler wraps them 3 per row; the order it prints is the order written here.
 
-> **`scope.tsv` is `key<TAB>value`, append-only, last line per key wins.** An absent key gives an absent table row — that is what keeps the plain scan's Scope table at three rows with no special case. A tab or a newline in a value breaks the row, so values are **stripped**, not escaped: no key here has any use for either character. Six writers across four turns append to this one file, and none of them ever rewrites or deletes a line.
+> **`scope.tsv` is `key<TAB>value`, append-only, last line per key wins.** An absent key gives an absent table row — that is what keeps the plain scan's Scope table at three rows with no special case (the `Agents` loss row prints only when `pass_1_agents` is not `12/12`). A tab or a newline in a value breaks the row, so values are **stripped**, not escaped: no key here has any use for either character. Six writers across four turns append to this one file, and none of them ever rewrites or deletes a line.
 >
 > `name` and `mode` are the **only two keys a model types**. Everything else is either shell knowledge or read by the assembler for itself: the threshold from the constant, `N` in `seen in k/N runs` from counting run files, the stamp from the directory's own name.
 
@@ -515,7 +515,7 @@ Two rules that file carries, repeated here because they are conditions and not t
 
 **When `--poc` was passed, Read `{resolved_path}/poc-guide.md` here too** (first pass only). The verification step runs after judging, so having the guide in hand before Turn 4 ends avoids a separate read. Without `--poc`, do not read it — there is no verification step to run.
 
-**When an agent dies.** Continue the pass with the eleven that came back. **Never respawn it, in any mode.** A retry costs an unbounded wait for one twelfth of the coverage, and a loop covers it for free — the next pass runs the same twelve specialties again, knowing what this one found. Record the loss in all three places, or it is a silent coverage loss: the pass summary line (Turn 4 step 5), the `run-K.md` header, and the report's `Passes` row.
+**When an agent dies.** Continue the pass with the eleven that came back. **Never respawn it, in any mode.** A retry costs an unbounded wait for one twelfth of the coverage, and a loop covers it for free — the next pass runs the same twelve specialties again, knowing what this one found. Record the loss, or it is a silent coverage loss: in the `run-K.md` header (`agents=N/12`), in the `pass_{K}_agents` key of `scope.tsv` (Turn 4 step 5a) — the only place the report's `Passes` row (on a 1-pass scan, its `Agents` row) reads the count from — and, when `{passes}` is above 1, in the pass summary line (Turn 4 step 5b). **An agent that returns but says it stopped is dead too:** a reply with no FINDING or LEAD block that reports a refusal, a safety stop or an abort is a lost specialty, not a clean result — count it out of `agents=N/12` and out of `pass_{K}_agents`. A reply with no blocks that says it reviewed its scope and found nothing is a clean result.
 
 **When a whole pass produces nothing** — the bundle build failed, or all twelve died:
 

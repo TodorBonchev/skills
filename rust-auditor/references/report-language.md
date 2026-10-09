@@ -40,8 +40,10 @@ These are data, not prose. Rewriting one of them for readability breaks the scan
 
 ## The rules
 
-1. **One sentence, one idea.** A Description is one sentence. A Lead description is one or
-   two. Never three.
+1. **One sentence, one idea.** A Description is one sentence. Two fixed sentences from
+   `judging.md` do not count toward it and go at the end: `Stubbed: impact as named.` (Gate 4)
+   and the masking sentence that starts `This path works after` (Gate 1). A Lead description is
+   one or two. Never three.
 2. **Twenty-five words is the ceiling.** Count them. Over the ceiling means two ideas in one
    sentence — cut it or split it.
 3. **Active voice, and name the actor.** Who does this? Write that word first.

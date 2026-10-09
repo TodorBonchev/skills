@@ -258,6 +258,13 @@ if [ -n "$passes_planned" ] && [ "$passes_planned" -gt 1 ] 2>/dev/null; then
   if [ "$N" -lt "$passes_planned" ]; then cell="$N of $passes_planned"; else cell="$passes_planned"; fi
   [ -n "$short" ] && cell="$cell ($short)"
   row "**Passes**" "$cell"
+else
+  # A 1-pass scan has no Passes row, so a lost agent would vanish from the report. It gets a
+  # row of its own, and only then: a 12/12 plain scan gets no Agents row.
+  a=$(scope pass_1_agents)
+  if [ -n "$a" ] && [ "$a" != "12/12" ] && [ "$N" -eq 1 ]; then
+    row "**Agents**" "⚠️ $a agents returned results. The other specialties are not covered by this scan."
+  fi
 fi
 [ "$memory_on" = 1 ] && row "**Memory**" "$mem_before records before this scan · $mem_after after · \`$mem_sha\`"
 [ -n "$broken" ] && row "**Run files**" "$broken"
